@@ -1,0 +1,21 @@
+{
+  "name": "tsc2-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:wafer": "node scripts/wafer-1nn.mjs",
+    "test:structures": "node --test scripts/structure-adapter.test.mjs"
+  },
+  "dependencies": {
+    "umap-js": "^1.4.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7"
+  }
+}
