@@ -186,7 +186,7 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
     <div class="dev-head">
       <b>编辑画布</b>
       <span class="ci-toolbar">
-        <button class="ci-tool" :class="{ on: store.tool === 'select' }" title="拖拽 = 划定选区（≤3；选区决定组件默认落点）" @click="store.tool = 'select'">选区</button>
+        <button class="ci-tool" :class="{ on: store.tool === 'select' }" title="拖拽 = 划定选区（选区决定组件作用区间）" @click="store.tool = 'select'">选区</button>
         <button class="ci-tool" :class="{ on: store.tool === 'deform' }" title="在波形上按住并上下拖动 = 局部点拖拽（写入配方的点编辑步）" @click="store.tool = 'deform'">点拖拽</button>
         <span class="hint" title="点拖拽时，以按下点为中心向两侧平滑影响的采样点数">笔宽（点）</span>
         <input v-model.number="store.brushWidth" type="number" min="2" max="30" class="num-in" style="width:52px" title="点拖拽的高斯影响宽度，单位=采样点" />

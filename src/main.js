@@ -99,9 +99,9 @@ function seedScenario() {
   api.addTransplant({ source: seg0, srcSpan: [112, 151], dstSpan: [112, 151], alpha: 1, seam: 7 });
   api.setStepVary(last().id, 'width', false);                       // 片段长度保持（长度是结构，不被缩放）
   api.addComponent('plateau');
-  api.updateStep(last().id, { anchor: 132, width: 34, amp: -0.5 }); // 压低尾部电平
+  api.updateStep(last().id, { width: 34, amp: -0.5 });                // 压低尾部电平
   api.addComponent('oscillation');
-  api.updateStep(last().id, { anchor: 96, width: 48, period: 7, amp: 0.08 });
+  api.updateStep(last().id, { width: 34, period: 7, amp: 0.08 });    // 尾部区间内高频起伏
   api.addTexture({ source: tex0, amount: 0.2, win: 9 });            // 借稀有类纹理的高频残差
   api.setStepVary(last().id, 'pos', false);
   api.setStepVary(last().id, 'width', false);

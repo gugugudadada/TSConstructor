@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:wafer": "node scripts/wafer-1nn.mjs",
+    "test:wafer:custom": "node scripts/wafer-1nn.mjs --train scripts/wafer_test/tsc2-candidates-all-task-20261021-165736.json",
+    "test:wafer:suite": "node scripts/wafer-suite.mjs",
     "test:structures": "node --test scripts/structure-adapter.test.mjs"
   },
   "dependencies": {

@@ -397,7 +397,6 @@ export function addRegion(span) {
   if (!sp) return false;
   const [a, b] = sp;
   if (b - a < 2) return false;
-  if (store.regions.length >= 3) { toast('选区最多 3 个——先删除一个'); return false; }
   pushUndo('新增选区');
   const id = ++regionSeq;
   store.regions.push({ id, span: [a, b] });
@@ -406,6 +405,13 @@ export function addRegion(span) {
   return true;
 }
 export function selectRegion(id) { store.selectedRegionId = id; }
+export function regionNameOfSpan(span) {
+  if (!Array.isArray(span)) return null;
+  const sp = normSpan(span);
+  if (!sp) return null;
+  const r = store.regions.find((x) => x.span[0] === sp[0] && x.span[1] === sp[1]);
+  return r ? `R${r.id}` : null;
+}
 export function removeRegion(id) {
   const i = store.regions.findIndex((r) => r.id === id);
   if (i < 0) return;
@@ -451,32 +457,24 @@ export function addComponent(key) {
   if (!def) return;
   const L = store.length;
   const reg = activeRegion();
-  const center = reg ? (reg.span[0] + reg.span[1]) / 2 : Math.round(L * 0.55);
-  const width = reg ? Math.max(3, reg.span[1] - reg.span[0]) : (def.params.find((p) => p.key === 'width')?.def ?? 8);
+  const span = reg ? normSpan(reg.span) : [0, L - 1];
+  const width = reg ? Math.max(3, span[1] - span[0]) : (def.params.find((p) => p.key === 'width')?.def ?? 8);
   const params = {};
   for (const p of def.params) {
-    if (p.key === 'anchor') params.anchor = center;
-    else if (p.key === 'width') params.width = width;
+    if (p.key === 'width') params.width = width;
     else params[p.key] = p.def;
   }
   /* 只有真正能落进配方时才压撤销栈——失败操作不应留下空撤销。 */
   pushUndo(`加入组件 ${def.name}`);
   const step = {
     id: newStepId(), kind: 'component', component: key, enabled: true,
-    mix: 'add', weight: 1, ...params,
+    span, mix: 'add', weight: 1, ...params,
     vary: defaultVary('component'),
   };
-  if (step.vary) {
-    /* 全条组件不消费位置/宽度轴；默认关闭，避免生成时产生虚假差异标签。 */
-    if (['trend', 'noise'].includes(key)) {
-      step.vary.pos = false;
-      step.vary.width = false;
-    }
-  }
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
-  rec('recipe', `组件 ${def.name} → 配方（锚点 ${Math.round(center)}）`);
+  rec('recipe', `组件 ${def.name} → 配方（区间 ${span[0]}–${span[1]}）`);
 }
 
 export function addDeform({ anchor, width, amp }) {
@@ -548,15 +546,15 @@ export function addTexture({ source, amount = 0.2, win = 9 } = {}) {
   rec('recipe', `纹理 → 配方（${ref.sampleId}，${amt.toFixed(2)}σ）`);
 }
 
-export function addErase({ span, mode = 'interp', feather = 5 }) {
+export function addErase({ span }) {
   const sp = normSpan(span);
-  if (!sp || sp[1] - sp[0] < 2) return;
+  if (!sp || sp[1] - sp[0] < 2) { toast('区间擦除需要至少 3 点的选区'); return; }
   pushUndo('区间擦除');
-  const step = { id: newStepId(), kind: 'erase', enabled: true, span: sp, mode, feather, vary: defaultVary('erase') };
+  const step = { id: newStepId(), kind: 'erase', enabled: true, span: sp, vary: defaultVary('erase') };
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
-  rec('recipe', `区间擦除 → 配方（${sp[0]}–${sp[1]}，${mode === 'zero' ? '置零' : '线性衔接'}）`);
+  rec('recipe', `区间擦除 → 配方（${sp[0]}–${sp[1]}，两端点平滑连接）`);
 }
 
 export function addScale({ span, factor = 1.2, feather = 8 }) {
@@ -570,6 +568,19 @@ export function addScale({ span, factor = 1.2, feather = 8 }) {
   store.selectedStepId = step.id;
   bumpRecipe();
   rec('recipe', `缩放 → 配方（${sp[0]}–${sp[1]}，×${f.toFixed(2)}）`);
+}
+
+export function addTranslate({ span, offset = 0.3, feather = 8 }) {
+  const sp = normSpan(span);
+  if (!sp || sp[1] - sp[0] < 2) { toast('幅值平移需要至少 3 点的选区'); return; }
+  const off = Math.max(-5, Math.min(5, Number(offset) || 0));
+  const ft = Math.max(1, Math.min(20, Math.round(Number(feather) || 8)));
+  pushUndo('幅值平移');
+  const step = { id: newStepId(), kind: 'translate', enabled: true, span: sp, offset: off, feather: ft, vary: defaultVary('translate') };
+  store.steps.push(step);
+  store.selectedStepId = step.id;
+  bumpRecipe();
+  rec('recipe', `幅值平移 → 配方（${sp[0]}–${sp[1]}，偏移 ${off.toFixed(2)}σ）`);
 }
 
 export function updateStep(id, patch) {
@@ -847,6 +858,224 @@ function downloadJson(filename, payload) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* ═══════════ 导入配方 ═══════════ */
+
+const IMPORTABLE_KINDS = new Set(['component', 'deform', 'warp', 'erase', 'scale', 'translate', 'transplant', 'texture']);
+
+function importVary(kind, raw) {
+  const v = defaultVary(kind);
+  if (raw && typeof raw === 'object') {
+    for (const key of ['pos', 'width', 'amp', 'src']) {
+      if (typeof raw[key] === 'boolean') v[key] = raw[key];
+    }
+  }
+  return v;
+}
+
+function importNum(v, fallback, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+/* 源按“角色 + 序号”重绑：配方本身不依赖导出时那一批具体素材。
+   当前没有对应角色素材时，保留 JSON 中的样本 id（同数据集仍可直接运行）。 */
+function bindImportedSource(rawSource, role, ctx) {
+  const invIds = role === 'segment' ? ctx.invSegment : ctx.invTexture;
+  const current = role === 'segment' ? ctx.currentSegment : ctx.currentTexture;
+  if (rawSource && invIds.includes(rawSource) && current.length) {
+    const slot = Math.max(0, invIds.indexOf(rawSource));
+    const id = current[slot] ?? current[0];
+    return { id, rebound: id !== rawSource };
+  }
+  if (rawSource && ctx.allIds.has(rawSource)) return { id: rawSource, rebound: false };
+  if (current.length) return { id: current[0], rebound: true };
+  return { id: null, rebound: false };
+}
+
+function sanitizeImportedStep(raw, ctx) {
+  if (!raw || typeof raw !== 'object' || !IMPORTABLE_KINDS.has(raw.kind)) return null;
+  const kind = raw.kind;
+  const s = {
+    ...raw,
+    id: newStepId(),
+    kind,
+    enabled: raw.enabled !== false,
+    vary: importVary(kind, raw.vary),
+  };
+
+  if (kind === 'component') {
+    const def = componentByKey(raw.component);
+    if (!def) return null;
+    s.component = raw.component;
+    s.span = normSpan(raw.span) ?? [0, ctx.L - 1];
+    s.mix = 'add';
+    s.weight = 1;
+    for (const p of def.params) {
+      s[p.key] = importNum(raw[p.key], p.def, p.min, p.max);
+    }
+    return s;
+  }
+
+  if (kind === 'deform') {
+    s.anchor = Math.round(importNum(raw.anchor, 0, 0, ctx.L - 1));
+    s.width = importNum(raw.width, store.brushWidth, 1, Math.max(1, ctx.L / 2));
+    s.amp = importNum(raw.amp, 0, -10, 10);
+    return s;
+  }
+
+  if (kind === 'warp') {
+    const span = normSpan(raw.span);
+    if (!span || span[1] - span[0] < 2) return null;
+    s.span = span;
+    s.factor = importNum(raw.factor, 1, 0.5, 2);
+    s.delta = Math.round(importNum(raw.delta, 0, -ctx.L, ctx.L));
+    return s;
+  }
+  if (kind === 'erase') {
+    const span = normSpan(raw.span);
+    if (!span || span[1] - span[0] < 2) return null;
+    s.span = span;
+    delete s.mode;
+    delete s.feather;
+    return s;
+  }
+  if (kind === 'scale') {
+    const span = normSpan(raw.span);
+    if (!span || span[1] - span[0] < 2) return null;
+    s.span = span;
+    s.factor = importNum(raw.factor, 1, 0.5, 2);
+    s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
+    return s;
+  }
+  if (kind === 'translate') {
+    const span = normSpan(raw.span);
+    if (!span || span[1] - span[0] < 2) return null;
+    s.span = span;
+    s.offset = importNum(raw.offset, 0.3, -5, 5);
+    s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
+    return s;
+  }
+  if (kind === 'transplant') {
+    const src = normSpan(raw.srcSpan);
+    if (!src || src[1] - src[0] < 2) return null;
+    const dst = raw.dstSpan ? normSpan(raw.dstSpan) : null;
+    if (raw.dstSpan && (!dst || dst[1] - dst[0] < 2)) return null;
+    const bound = bindImportedSource(raw.source, 'segment', ctx);
+    s.source = bound.id;
+    if (bound.rebound) ctx.rebound += 1;
+    if (!bound.id) { s.enabled = false; ctx.missingSources += 1; }
+    s.srcSpan = src;
+    s.dstSpan = dst;
+    s.dstStart = dst ? null : Math.round(importNum(raw.dstStart, ctx.L / 2, 0, ctx.L - 1));
+    s.alpha = importNum(raw.alpha, 1, 0, 1);
+    s.seam = Math.round(importNum(raw.seam, 6, 1, 60));
+    return s;
+  }
+  if (kind === 'texture') {
+    const bound = bindImportedSource(raw.source, 'texture', ctx);
+    s.source = bound.id;
+    if (bound.rebound) ctx.rebound += 1;
+    if (!bound.id) { s.enabled = false; ctx.missingSources += 1; }
+    s.amount = importNum(raw.amount, 0.2, 0, 1.5);
+    s.win = Math.round(importNum(raw.win, 9, 3, 31));
+    return s;
+  }
+  return null;
+}
+
+export function importRecipeText(text, filename = '配方') {
+  let payload;
+  try {
+    payload = JSON.parse(String(text ?? ''));
+  } catch (err) {
+    toast(`导入配方失败：JSON 无效（${String(err?.message ?? err)}）`);
+    return { ok: false, msg: 'JSON 无效' };
+  }
+
+  const recipeField = payload?.recipe;
+  const rawSteps = Array.isArray(payload) ? payload
+    : Array.isArray(recipeField) ? recipeField
+      : Array.isArray(recipeField?.steps) ? recipeField.steps
+        : Array.isArray(payload?.steps) ? payload.steps
+          : null;
+  if (!rawSteps) {
+    toast('导入配方失败：文件里没有 steps 数组');
+    return { ok: false, msg: '缺少 steps' };
+  }
+
+  const inv = payload.inventory
+    ?? (recipeField && !Array.isArray(recipeField) ? recipeField : {});
+  const ctx = {
+    L: store.length,
+    allIds: sampleIndex,
+    invSegment: Array.isArray(inv.segmentIds) ? inv.segmentIds : [],
+    invTexture: Array.isArray(inv.textureIds) ? inv.textureIds : [],
+    currentSegment: segmentRefs().map((r) => r.sampleId),
+    currentTexture: textureRefs().map((r) => r.sampleId),
+    rebound: 0,
+    missingSources: 0,
+  };
+
+  const imported = [];
+  let skipped = 0;
+  for (const raw of rawSteps) {
+    const step = sanitizeImportedStep(raw, ctx);
+    if (step) imported.push(step);
+    else skipped += 1;
+  }
+  if (!imported.length) {
+    toast('导入配方失败：没有可用的操作步');
+    return { ok: false, msg: '没有可用操作步' };
+  }
+
+  pushUndo('导入配方');
+  store.steps = imported;
+  store.selectedStepId = imported.find((s) => s.enabled !== false)?.id ?? imported[0].id;
+  store.previewOp = null;
+  bumpRecipe();
+
+  const datasetMismatch = !!(payload?.dataset?.id && store.datasetId && payload.dataset.id !== store.datasetId);
+  const notes = [];
+  if (skipped) notes.push(`跳过 ${skipped} 步`);
+  if (ctx.missingSources) notes.push(`${ctx.missingSources} 步缺源已停用`);
+  if (ctx.rebound) notes.push(`${ctx.rebound} 步源已按角色重绑`);
+  if (datasetMismatch) notes.push('数据集不同，区间已按当前长度裁剪');
+  const detail = `导入配方 ${filename}：${imported.length} 步${notes.length ? ` · ${notes.join(' · ')}` : ''}`;
+  rec('import', detail);
+  toast(detail, 4200);
+  return {
+    ok: true,
+    imported: imported.length,
+    skipped,
+    rebound: ctx.rebound,
+    missingSources: ctx.missingSources,
+    datasetMismatch,
+  };
+}
+
+export async function importRecipeFile(file) {
+  if (!file) { toast('没有选择配方文件'); return { ok: false, msg: '没有选择文件' }; }
+  if (file.size > 5 * 1024 * 1024) {
+    toast('导入配方失败：文件超过 5 MB');
+    return { ok: false, msg: '文件过大' };
+  }
+  try {
+    const text = typeof file.text === 'function'
+      ? await file.text()
+      : await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result ?? ''));
+        fr.onerror = () => reject(new Error('读取文件失败'));
+        fr.readAsText(file);
+      });
+    return importRecipeText(text, file.name);
+  } catch (err) {
+    toast(`导入配方失败：${String(err?.message ?? err)}`);
+    return { ok: false, msg: String(err?.message ?? err) };
+  }
 }
 
 /* ═══════════ 展示辅助 ═══════════ */

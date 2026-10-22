@@ -1,7 +1,7 @@
 <script setup>
 /* Dock：横切层——数据集（会话边界）+ 目标类别摘要 + 素材/候选计数 + 撤销 + 记录 + 帮助。 */
 import { computed, ref } from 'vue';
-import { store, undo, undoDepth, exportCandidates, exportRecipe } from '../store.js';
+import { store, undo, undoDepth, exportCandidates, exportRecipe, importRecipeFile } from '../store.js';
 import { ui } from '../ui.js';
 import { DATASETS } from '../data/datasets.js';
 
@@ -33,6 +33,18 @@ function confirmSwitch() {
 }
 const pendingName = computed(() => DATASETS.find((d) => d.id === ui.pendingDataset)?.name ?? '');
 const open = ref(false);
+const recipeFileEl = ref(null);
+
+function pickRecipe() {
+  recipeFileEl.value?.click();
+}
+async function onRecipeFile(e) {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  if (store.steps.length && !window.confirm(`导入配方会替换当前 ${store.steps.length} 步，继续？`)) return;
+  await importRecipeFile(file);
+}
 </script>
 
 <template>
@@ -57,6 +69,8 @@ const open = ref(false);
       <button class="chip" :disabled="!canUndo" :title="canUndo ? '撤销上一步（Ctrl+Z）' : '无可撤销操作'" @click="undo()">撤销</button>
       <button class="chip" title="导出候选（含配方 / 差异签名）" :disabled="!hasOut" @click="exportCandidates()">导出候选</button>
       <button class="chip" title="导出当前配方（可复现）" @click="exportRecipe()">导出配方</button>
+      <button class="chip" title="导入配方 JSON（替换当前配方；素材源按角色自动重绑）" @click="pickRecipe()">导入配方</button>
+      <input ref="recipeFileEl" type="file" accept=".json,application/json" hidden @change="onRecipeFile" />
       <button class="chip" @click="ui.drawer = 'records'">记录 <b>{{ store.records.length }}</b></button>
       <button class="chip" @click="ui.drawer = 'help'">帮助</button>
     </div>

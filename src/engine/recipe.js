@@ -2,7 +2,7 @@
    = 把"直接编辑 + 组件组合"整理为**结构化、可复用、可变化**的配方，并在不同源样本上执行。
 
    设计要点（对应 idea 的 RQ1/RQ2）：
-   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 幅值缩放；
+   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 幅值平移 / 幅值缩放；
      每步都结构化记录对象、区间、参数、源样本，而不是只存最终数组。
    · 每步带 `vary`：哪些维度允许在生成时变化（位置 / 宽度 / 强度 / 源）。
    · runRecipe：给定基源样本 + 配方 → 结果曲线 + 逐级中间结果 + **逐点归因贡献**。
@@ -80,48 +80,35 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /* ═══════════ 组件库（可直接编辑的构造基底） ═══════════ */
 
 function gauss(i, a, w) { const z = (i - a) / Math.max(1e-6, w); return Math.exp(-0.5 * z * z); }
-const sigmoid = (z) => 1 / (1 + Math.exp(-z));
 
 export const COMPONENTS = [
   {
     key: 'pulse', name: '脉冲', glyph: '⌒', color: '#e07a2f', family: '组件',
-    note: '窄而高的局部峰（高斯核）',
+    note: '区间中心的高斯峰（宽度控制形状）',
     params: [
-      { key: 'anchor', label: '锚点', unit: '点', min: 0, max: 151, step: 1, def: 76 },
       { key: 'width', label: '宽度', unit: '点', min: 1, max: 60, step: 1, def: 7 },
       { key: 'amp', label: '强度', unit: '×σ', min: -3, max: 3, step: 0.05, def: 0.9 },
     ],
   },
   {
-    key: 'step', name: '阶跃', glyph: '⌐', color: '#c0504d', family: '组件',
-    note: '在锚点处的平滑电平跃迁',
-    params: [
-      { key: 'anchor', label: '锚点', unit: '点', min: 0, max: 151, step: 1, def: 70 },
-      { key: 'width', label: '过渡宽', unit: '点', min: 1, max: 40, step: 1, def: 5 },
-      { key: 'amp', label: '强度', unit: '×σ', min: -3, max: 3, step: 0.05, def: -0.5 },
-    ],
-  },
-  {
     key: 'plateau', name: '平台', glyph: '▬', color: '#7a6fb0', family: '组件',
-    note: '带平滑边缘的抬升 / 压平段',
+    note: '区间内的平滑抬升 / 压平段',
     params: [
-      { key: 'anchor', label: '中心', unit: '点', min: 0, max: 151, step: 1, def: 110 },
       { key: 'width', label: '长度', unit: '点', min: 3, max: 100, step: 1, def: 26 },
       { key: 'amp', label: '强度', unit: '×σ', min: -3, max: 3, step: 0.05, def: -0.4 },
     ],
   },
   {
     key: 'trend', name: '趋势', glyph: '╱', color: '#8d99a6', family: '组件',
-    note: '全条线性倾斜（总变化量）',
+    note: '区间内线性倾斜（总变化量）',
     params: [
       { key: 'amp', label: '强度', unit: '×σ', min: -2, max: 2, step: 0.02, def: 0.4 },
     ],
   },
   {
     key: 'oscillation', name: '震荡', glyph: '∿', color: '#4a8f8a', family: '组件',
-    note: '包络加权的正弦震荡（周期 + 包络宽）',
+    note: '区间内包络正弦震荡（周期 + 包络宽）',
     params: [
-      { key: 'anchor', label: '中心', unit: '点', min: 0, max: 151, step: 1, def: 100 },
       { key: 'width', label: '包络宽', unit: '点', min: 3, max: 100, step: 1, def: 34 },
       { key: 'period', label: '周期', unit: '点', min: 3, max: 60, step: 1, def: 7 },
       { key: 'amp', label: '强度', unit: '×σ', min: -2, max: 2, step: 0.02, def: 0.14 },
@@ -129,7 +116,7 @@ export const COMPONENTS = [
   },
   {
     key: 'noise', name: '噪声', glyph: '▒', color: '#a0a0a0', family: '组件',
-    note: '种子化均匀抖动（可选平滑）',
+    note: '区间内种子化均匀抖动（可选平滑）',
     params: [
       { key: 'amp', label: '强度', unit: '×σ', min: 0, max: 0.6, step: 0.005, def: 0.05 },
       { key: 'win', label: '平滑窗', unit: '点', min: 1, max: 9, step: 2, def: 1 },
@@ -139,43 +126,50 @@ export const COMPONENTS = [
 
 export function componentByKey(key) { return COMPONENTS.find((c) => c.key === key) ?? null; }
 
-/* 组件形状（单位 = σ 的倍数；未乘 stdBase）。ctx.noiseSeed 供噪声组件使用。 */
+/* 组件形状（单位 = σ 的倍数；未乘 stdBase）。
+   作用区间 = op.span；区间外为 0。区间内仍由组件自己的形状参数（width/period 等）决定形。
+   ctx.noiseSeed 供噪声组件使用。 */
 export function componentShape(op, L, ctx = {}) {
   const out = new Float64Array(L);
-  const a = op.anchor ?? L / 2;
+  let a0 = 0, a1 = L - 1;
+  if (Array.isArray(op.span)) {
+    a0 = clamp(Math.round(Math.min(op.span[0], op.span[1])), 0, L - 1);
+    a1 = clamp(Math.round(Math.max(op.span[0], op.span[1])), 0, L - 1);
+  }
+  if (a1 < a0) { const t = a0; a0 = a1; a1 = t; }
+  const a = (a0 + a1) / 2;
   const w = Math.max(1e-6, op.width ?? 8);
   switch (op.component) {
     case 'pulse':
-      for (let i = 0; i < L; i++) out[i] = gauss(i, a, w);
-      break;
-    case 'step':
-      for (let i = 0; i < L; i++) out[i] = sigmoid((i - a) / w) - 0.5;
+      for (let i = a0; i <= a1; i++) out[i] = gauss(i, a, w);
       break;
     case 'plateau': {
       const edge = Math.max(1, w * 0.10);
       const h = w / 2;
-      for (let i = 0; i < L; i++) out[i] = 0.5 * (Math.tanh((i - (a - h)) / edge) - Math.tanh((i - (a + h)) / edge));
+      for (let i = a0; i <= a1; i++) out[i] = 0.5 * (Math.tanh((i - (a - h)) / edge) - Math.tanh((i - (a + h)) / edge));
       break;
     }
     case 'oscillation': {
       const period = Math.max(2, op.period ?? 8);
-      for (let i = 0; i < L; i++) out[i] = Math.sin((2 * Math.PI * (i - a)) / period) * gauss(i, a, w);
+      for (let i = a0; i <= a1; i++) out[i] = Math.sin((2 * Math.PI * (i - a)) / period) * gauss(i, a, w);
       break;
     }
     case 'trend':
-      for (let i = 0; i < L; i++) out[i] = (i / (L - 1) - 0.5) * 2;   // −1 → +1
+      for (let i = a0; i <= a1; i++) out[i] = ((i - a0) / Math.max(1, a1 - a0) - 0.5) * 2;   // 区间内 −1 → +1
       break;
     case 'noise': {
       const rng = mulberry32((ctx.noiseSeed ?? 1) >>> 0);
       const win = Math.max(1, op.win ?? 1);
       const raw = new Float64Array(L);
       for (let i = 0; i < L; i++) raw[i] = rng() * 2 - 1;
-      if (win <= 1) { out.set(raw); break; }
-      const ma = movingAvg(raw, win);
-      let s = 0;
-      for (let i = 0; i < L; i++) s += ma[i] * ma[i];
-      s = Math.sqrt(s / L) || 1e-12;
-      for (let i = 0; i < L; i++) out[i] = ma[i] / s;
+      if (win > 1) {
+        const ma = movingAvg(raw, win);
+        let s = 0;
+        for (let i = 0; i < L; i++) s += ma[i] * ma[i];
+        s = Math.sqrt(s / L) || 1e-12;
+        for (let i = 0; i < L; i++) raw[i] = ma[i] / s;
+      }
+      for (let i = a0; i <= a1; i++) out[i] = raw[i];
       break;
     }
     default:
@@ -309,22 +303,19 @@ export function applyStep(cur, step, ctx) {
       return { values: out };
     }
     case 'erase': {
-      let d0 = clamp(Math.round(Math.min(step.span[0], step.span[1])), 0, L - 1);
-      let d1 = clamp(Math.round(Math.max(step.span[0], step.span[1])), 0, L - 1);
-      if (d1 - d0 + 1 < 3) return { values: null, reason: '区间过短（至少 3 点）' };
+      if (!step.span) return { values: null, reason: '缺少区间' };
+      const d0 = clamp(Math.round(Math.min(step.span[0], step.span[1])), 0, L - 1);
+      const d1 = clamp(Math.round(Math.max(step.span[0], step.span[1])), 0, L - 1);
+      const n = d1 - d0 + 1;
+      if (n < 3) return { values: null, reason: '区间过短（至少 3 点）' };
+      /* 擦除 = 用区间两端点做余弦平滑桥接；两端点保持原值，内部不再保留原形状。 */
+      const y0 = cur[d0];
+      const y1 = cur[d1];
       const out = cur.slice();
-      const a = Math.max(0, d0 - 1), b = Math.min(L - 1, d1 + 1);
-      const seam = Math.max(1, Math.min(step.feather ?? 5, Math.floor((d1 - d0 + 1) / 3)));
-      const target = new Array(d1 - d0 + 1);
-      for (let k = 0; k < target.length; k++) {
-        if (step.mode === 'zero') target[k] = 0;
-        else target[k] = out[a] + (out[b] - out[a]) * (k / Math.max(1, target.length - 1));
-      }
-      for (let k = 0; k < target.length; k++) {
-        let bf = 1;
-        if (k < seam) bf = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
-        else if (k >= target.length - seam) bf = 0.5 * (1 - Math.cos((Math.PI * (target.length - 1 - k)) / seam));
-        out[d0 + k] = out[d0 + k] * (1 - bf) + target[k] * bf;
+      for (let k = 0; k < n; k++) {
+        const t = k / (n - 1);
+        const s = 0.5 - 0.5 * Math.cos(Math.PI * t);
+        out[d0 + k] = y0 + (y1 - y0) * s;
       }
       return { values: out };
     }
@@ -349,6 +340,25 @@ export function applyStep(cur, step, ctx) {
         out[d0 + k] = cur[d0 + k] + (factor - 1) * (cur[d0 + k] - pivot) * w;
       }
       return { values: out, unit: '×' };
+    }
+    case 'translate': {
+      /* 幅值平移：在选区内整体上下偏移，两端余弦羽化回原值。 */
+      if (!step.span) return { values: null, reason: '缺少区间' };
+      const d0 = clamp(Math.round(Math.min(step.span[0], step.span[1])), 0, L - 1);
+      const d1 = clamp(Math.round(Math.max(step.span[0], step.span[1])), 0, L - 1);
+      const n = d1 - d0 + 1;
+      if (n < 3) return { values: null, reason: '区间过短（至少 3 点）' };
+      const offset = Number.isFinite(step.offset) ? step.offset : 0;
+      if (!offset) return { values: cur.slice(), unit: '×σ' };
+      const seam = Math.max(1, Math.min(Math.round(step.feather ?? 8), Math.floor(n / 3)));
+      const out = cur.slice();
+      for (let k = 0; k < n; k++) {
+        let w = 1;
+        if (k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
+        else if (k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
+        out[d0 + k] = cur[d0 + k] + stdBase * offset * w;
+      }
+      return { values: out, unit: '×σ' };
     }
     default:
       return { values: null, reason: `未知操作：${step.kind}` };
@@ -442,6 +452,7 @@ export function stepLabel(step) {
     case 'texture': return '纹理';
     case 'erase': return '区间擦除';
     case 'scale': return '缩放';
+    case 'translate': return '幅值平移';
     default: return step.kind;
   }
 }
@@ -546,25 +557,44 @@ export function defaultVary(kind) {
   if (kind === 'transplant') return { pos: true, width: true, amp: true, src: true };
   if (kind === 'erase') return { pos: true, width: false, amp: false, src: false };
   if (kind === 'scale') return { pos: true, width: false, amp: true, src: false };
+  if (kind === 'translate') return { pos: true, width: false, amp: true, src: false };
   if (kind === 'texture') return { pos: false, width: false, amp: true, src: true };
   return { pos: true, width: true, amp: true, src: false };
 }
 
-/* 只有局部组件（脉冲/阶跃/平台/震荡）吃 anchor / width；
-   trend / noise 是全条变换，位置/宽度轴对它们没有意义。 */
-function componentHasLocalBounds(step) {
-  return step.kind !== 'component' || !['trend', 'noise'].includes(step.component);
-}
-
+/* 组件的「位 / 宽」现在都作用于 span：位 = 区间平移，宽 = 区间长度变化。 */
 export function varyTagsOf(step) {
   const v = step.vary ?? defaultVary(step.kind);
   const out = [];
-  const local = componentHasLocalBounds(step);
-  if (v.pos && local) out.push(['pos', '位']);
-  if (v.width && local) out.push(['width', '宽']);
+  if (v.pos) out.push(['pos', '位']);
+  if (v.width) out.push(['width', '宽']);
   if (v.amp) out.push(['amp', '强']);
   if (v.src && (step.kind === 'transplant' || step.kind === 'texture')) out.push(['src', '源']);
   return out;
+}
+
+function spanOf(step, L) {
+  const a = Array.isArray(step.span) ? step.span[0] : 0;
+  const b = Array.isArray(step.span) ? step.span[1] : L - 1;
+  return [clamp(Math.round(Math.min(a, b)), 0, L - 1), clamp(Math.round(Math.max(a, b)), 0, L - 1)];
+}
+
+function shiftSpan(step, d, L) {
+  let [a, b] = spanOf(step, L);
+  let len = b - a + 1;
+  if (len > L) len = L;
+  a = clamp(a + d, 0, L - len);
+  step.span = [a, a + len - 1];
+}
+
+function scaleSpan(step, factor, L) {
+  let [a, b] = spanOf(step, L);
+  const len = b - a + 1;
+  const center = (a + b) / 2;
+  let nl = clamp(Math.round(len * factor), 3, L);
+  a = clamp(Math.round(center - nl / 2), 0, L - nl);
+  step.span = [a, a + nl - 1];
+  return [len, nl];
 }
 
 function pickOther(pool, current, rng) {
@@ -596,12 +626,21 @@ export function instantiateSteps(steps, opts) {
     const vary = step.vary ?? defaultVary(step.kind);
     const parts = [];
     if (s.kind === 'component') {
-      const local = componentHasLocalBounds(s);
-      if (local && s.anchor != null && vary.pos) { const nv = jp(s.anchor, axes.anchor, 0, L - 1, false); if (nv !== s.anchor) parts.push(`位${delta(s.anchor, nv)}`); s.anchor = nv; }
-      if (local && s.width != null && vary.width) { const nv = jf(s.width, axes.width, 1, L / 2); if (nv !== s.width) parts.push(`宽${pct(s.width, nv)}`); s.width = nv; }
-      if (local && s.period != null && vary.width) { const nv = jf(s.period, axes.width, 3, 60); if (nv !== s.period) parts.push(`周${pct(s.period, nv)}`); s.period = nv; }
+      if (vary.pos) {
+        const before = spanOf(s, L);
+        const d = Math.round((rng() * 2 - 1) * axes.anchor);
+        if (d !== 0) {
+          shiftSpan(s, d, L);
+          parts.push(`位${d > 0 ? '+' : ''}${d}`);
+        } else {
+          s.span = before;
+        }
+      }
+      if (vary.width) {
+        const [oldLen, newLen] = scaleSpan(s, 1 + (rng() * 2 - 1) * axes.width, L);
+        if (newLen !== oldLen) parts.push(`宽${pct(oldLen, newLen)}`);
+      }
       if (s.amp != null && vary.amp) { const nv = jf(s.amp, axes.param, -3, 3); if (nv !== s.amp) parts.push(`强${pct(s.amp, nv)}`); s.amp = nv; }
-      if (s.amount != null && vary.amp) { const nv = clamp(s.amount * (1 + (rng() * 2 - 1) * axes.param), 0, 1.5); if (nv !== s.amount) parts.push(`强${pct(s.amount, nv)}`); s.amount = nv; }
     } else if (s.kind === 'deform') {
       if (vary.pos) { const nv = jp(s.anchor, axes.anchor, 0, L - 1, false); if (nv !== s.anchor) parts.push(`位${delta(s.anchor, nv)}`); s.anchor = nv; }
       if (vary.width) { const nv = jf(s.width, axes.width, 1, L / 2); if (nv !== s.width) parts.push(`宽${pct(s.width, nv)}`); s.width = nv; }
@@ -662,6 +701,17 @@ export function instantiateSteps(steps, opts) {
         const nv = clamp(baseFactor * (1 + (rng() * 2 - 1) * axes.param), 0.5, 2);
         if (nv !== s.factor) parts.push(`强${pct(baseFactor, nv)}`);
         s.factor = nv;
+      }
+    } else if (s.kind === 'translate') {
+      if (vary.pos) {
+        const d = Math.round((rng() * 2 - 1) * axes.anchor);
+        if (d !== 0) { s.span = [clamp(s.span[0] + d, 0, L - 1), clamp(s.span[1] + d, 0, L - 1)]; parts.push(`位${d > 0 ? '+' : ''}${d}`); }
+      }
+      if (vary.amp) {
+        const baseOffset = Number.isFinite(s.offset) ? s.offset : 0;
+        const nv = clamp(baseOffset * (1 + (rng() * 2 - 1) * axes.param), -5, 5);
+        if (nv !== s.offset) parts.push(`强${pct(baseOffset, nv)}`);
+        s.offset = nv;
       }
     }
     if (parts.length) tags.push({ opId: step.id, kind: s.kind, label: stepLabel(s), parts });

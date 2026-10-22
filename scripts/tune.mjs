@@ -54,20 +54,17 @@ const transplant = {
   srcSpan: segSpan, dstSpan: segSpan, alpha: 1.0, seam: 7,
   vary: V({ width: false, src: true }),
 };
-const stepTail = { id: 'st3', kind: 'component', component: 'step', enabled: true, anchor: 66, width: 6, amp: -0.35, mix: 'add', weight: 1, vary: V() };
-const plateauTail = { id: 'st3b', kind: 'component', component: 'plateau', enabled: true, anchor: 132, width: 34, amp: -0.45, mix: 'add', weight: 1, vary: V() };
-const osc = { id: 'st2', kind: 'component', component: 'oscillation', enabled: true, anchor: 96, width: 48, period: 7, amp: 0.16, mix: 'add', weight: 1, vary: V() };
+const plateauTail = { id: 'st3b', kind: 'component', component: 'plateau', enabled: true, span: segSpan, width: 34, amp: -0.45, mix: 'add', weight: 1, vary: V() };
+const osc = { id: 'st2', kind: 'component', component: 'oscillation', enabled: true, span: segSpan, width: 34, period: 7, amp: 0.16, mix: 'add', weight: 1, vary: V() };
 const resid = { id: 'st4', kind: 'texture', enabled: true, source: donor.id, amount: 0.35, win: 9, vary: V({ pos: false, width: false, src: true }) };
 const deform = { id: 'st5', kind: 'deform', enabled: true, anchor: 124, width: 7, amp: -0.2, vary: V() };
 
 test('transplant only', [transplant]);
-test('transplant+step', [transplant, stepTail]);
 test('transplant+plateau', [transplant, plateauTail]);
 test('transplant+osc', [transplant, osc]);
 test('transplant+osc+resid', [transplant, osc, resid]);
-test('transplant+step+osc+resid', [transplant, stepTail, osc, resid]);
 test('transplant+plateau+osc+resid', [transplant, plateauTail, osc, resid]);
-test('transplant+step+osc+resid+deform', [transplant, stepTail, osc, resid, deform]);
+test('transplant+plateau+osc+resid+deform', [transplant, plateauTail, osc, resid, deform]);
 test('plateau+osc+resid (no transplant)', [plateauTail, osc, resid]);
 
 console.log('--- FINAL seed recipe ---');

@@ -5,20 +5,30 @@ import { computed } from 'vue';
 import {
   store, componentByKey, updateStep, setStepVary, removeStep, toggleStepEnabled, moveStep,
   duplicateStep, clearSteps, selectStep, stepLabel, segmentRefs, textureRefs, activeRegion, toast,
+  regionNameOfSpan,
 } from '../store.js';
 
 const LEN = computed(() => store.length);
-const segPool = computed(() => segmentRefs().map((r) => r.sampleId));
-const texPool = computed(() => textureRefs().map((r) => r.sampleId));
+const segPool = computed(() => {
+  const ids = segmentRefs().map((r) => r.sampleId);
+  for (const s of store.steps) {
+    if (s.kind === 'transplant' && s.source && !ids.includes(s.source)) ids.push(s.source);
+  }
+  return ids;
+});
+const texPool = computed(() => {
+  const ids = textureRefs().map((r) => r.sampleId);
+  for (const s of store.steps) {
+    if (s.kind === 'texture' && s.source && !ids.includes(s.source)) ids.push(s.source);
+  }
+  return ids;
+});
 
 function paramsFor(step) {
   if (step.kind === 'component') {
     const def = componentByKey(step.component);
     if (!def) return [];
-    /* 组件登记表的锚点上限按 152 点写死；ECG5000 只有 140 点——按当前数据集收窄。 */
-    return def.params
-      .filter((p) => step[p.key] != null)
-      .map((p) => (p.key === 'anchor' ? { ...p, max: Math.min(p.max, LEN.value - 1) } : p));
+    return def.params.filter((p) => step[p.key] != null);
   }
   if (step.kind === 'deform') {
     return [
@@ -29,7 +39,8 @@ function paramsFor(step) {
   }
   if (step.kind === 'warp') return [{ key: 'factor', label: '伸缩', min: 0.8, max: 1.25, step: 0.005 }, { key: 'delta', label: '位移', min: -12, max: 12, step: 1 }];
   if (step.kind === 'transplant') return [{ key: 'alpha', label: '混合', min: 0, max: 1, step: 0.02 }, { key: 'seam', label: '接缝', min: 1, max: 20, step: 1 }];
-  if (step.kind === 'erase') return [{ key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
+  if (step.kind === 'erase') return [];
+  if (step.kind === 'translate') return [{ key: 'offset', label: '偏移', min: -3, max: 3, step: 0.02 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
   if (step.kind === 'scale') return [{ key: 'factor', label: '缩放', min: 0.5, max: 2, step: 0.01 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
   if (step.kind === 'texture') return [{ key: 'amount', label: '强度', min: 0, max: 1.5, step: 0.02 }, { key: 'win', label: '趋势窗', min: 3, max: 31, step: 2 }];
   return [];
@@ -37,30 +48,36 @@ function paramsFor(step) {
 const VARY_PARTS = [['pos', '位'], ['width', '宽'], ['amp', '强'], ['src', '源']];
 function varyApplies(step, part) {
   if (step.kind === 'component') {
-    const c = step.component;
     if (part === 'src') return false;
     if (part === 'amp') return true;
-    const local = !['trend', 'noise'].includes(c);
-    return part === 'pos' || part === 'width' ? local : false;
+    return part === 'pos' || part === 'width';
   }
   if (step.kind === 'texture') return part === 'src' || part === 'amp';
   if (part === 'src') return step.kind === 'transplant';
   if (part === 'width') return ['deform', 'warp', 'transplant'].includes(step.kind);
-  if (part === 'amp') return ['deform', 'transplant', 'scale'].includes(step.kind);
-  return ['deform', 'warp', 'transplant', 'erase', 'scale'].includes(step.kind);
+  if (part === 'amp') return ['deform', 'transplant', 'scale', 'translate'].includes(step.kind);
+  return ['deform', 'warp', 'transplant', 'erase', 'scale', 'translate'].includes(step.kind);
+}
+function spanLabel(span) {
+  if (!Array.isArray(span)) return '整条';
+  const name = regionNameOfSpan(span);
+  if (name) return name;
+  if (span[0] === 0 && span[1] === LEN.value - 1) return '整条';
+  return `${span[0]}–${span[1]}`;
 }
 function scopeText(step) {
-  if (step.kind === 'component') return step.component === 'trend' || step.component === 'noise' ? '全条' : `锚点 ${Math.round(step.anchor)}`;
+  if (step.kind === 'component') return spanLabel(step.span);
   if (step.kind === 'deform') return `t=${Math.round(step.anchor)}`;
-  if (step.kind === 'warp' || step.kind === 'erase' || step.kind === 'scale') return `${step.span?.[0]}–${step.span?.[1]}`;
+  if (step.kind === 'warp' || step.kind === 'erase' || step.kind === 'scale' || step.kind === 'translate') return spanLabel(step.span);
   if (step.kind === 'texture') return '全条';
-  if (step.kind === 'transplant') return `${step.dstSpan ? `${step.dstSpan[0]}–${step.dstSpan[1]}` : `落点 ${step.dstStart}`}`;
+  if (step.kind === 'transplant') return `落点 ${step.dstSpan ? spanLabel(step.dstSpan) : `@${step.dstStart}`}`;
   return '';
 }
 function stepHint(step) {
   if (step.kind === 'transplant') return `克隆源 ${step.source} [${step.srcSpan[0]}–${step.srcSpan[1]}]`;
   if (step.kind === 'texture') return `纹理源 ${step.source ?? '（未指定）'}`;
-  if (step.kind === 'erase') return step.mode === 'zero' ? '置零' : '线性衔接';
+  if (step.kind === 'erase') return '两端点平滑连接';
+  if (step.kind === 'translate') return `偏移 ${Number(step.offset ?? 0) >= 0 ? '+' : ''}${Number(step.offset ?? 0).toFixed(2)}σ`;
   if (step.kind === 'scale') return `×${Number(step.factor ?? 1).toFixed(2)}`;
   return '';
 }
@@ -110,18 +127,10 @@ function setSrcPool(step, e) { updateStep(step.id, { source: e.target.value }); 
             <option v-for="id in (s.kind === 'transplant' ? segPool : texPool)" :key="id" :value="id">{{ id }}</option>
           </select>
           <template v-if="s.kind === 'transplant'">
-            <span>落点 {{ s.dstSpan ? `${s.dstSpan[0]}–${s.dstSpan[1]}` : `@${s.dstStart}` }}</span>
+            <span>落点 {{ s.dstSpan ? spanLabel(s.dstSpan) : `@${s.dstStart}` }}</span>
             <button class="btn xs ghost" @click.stop="pickDstFromRegion(s)">落点 = 当前选区</button>
           </template>
         </div>
-        <div v-if="s.kind === 'erase'" class="pl-src">
-          <span>方式</span>
-          <select :value="s.mode" @click.stop @change="updateStep(s.id, { mode: $event.target.value })">
-            <option value="interp">线性衔接</option>
-            <option value="zero">置零</option>
-          </select>
-        </div>
-
         <!-- 参数滑条 -->
         <div v-for="p in paramsFor(s)" :key="p.key" class="pl-param">
           <span class="pl-label">{{ p.label }}</span>

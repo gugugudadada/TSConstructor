@@ -1,39 +1,45 @@
 /* Wafer 端到端 1NN 训练 + 测试（无第三方依赖）。
  *
- * 默认训练集：
- *   node scripts/wafer-1nn.mjs
- * 或用应用“导出全部批次”的 JSON 直接做训练集：
- *   node scripts/wafer-1nn.mjs --train C:\path\to\tsc2-candidates-all-xxx.json
+ * 默认模式：
+ *   1) 全量训练：Wafer_TRAIN 全部 1000 条；
+ *   2) 仅正常类训练：Wafer_TRAIN 中 label = 1.0000000e+00 的 903 条；
+ *   两者都用 Wafer_TEST 全量 6164 条测试。
  *
- * 测试集固定为 Wafer_TRAIN.txt 的确定性分层留出集（默认 20%，seed 42）。
- * 导出文件默认使用候选的 baseClass 作为 1NN 标签；若目标类别本身存在于
- * Wafer 测试集（例如缺类重建），则自动改用目标类别标签。可用 --label 强制。
+ * 自定义模式：
+ *   训练 = Wafer_TRAIN 中非稀有类 + 导出 JSON 全部候选（全部标为稀有类）；
+ *   原始 Wafer_TRAIN 的稀有类不参与训练；测试 = Wafer_TEST 全量。
  *
  * 1NN = 原始值欧氏距离，不做归一化、不重采样。
  */
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
+const DEFAULT_TRAIN_DATA = resolve(root, 'public/data/Wafer_TRAIN.txt');
+const DEFAULT_TEST_DATA = resolve(root, 'public/data/Wafer_TEST.txt');
+const DEFAULT_RARE_LABEL = '-1.0000000e+00';
+const DEFAULT_NORMAL_LABEL = '1.0000000e+00';
 
 function parseArgs(argv) {
   const out = {
     train: 'default',
-    data: resolve(root, 'public/data/Wafer_TRAIN.txt'),
-    ratio: 0.2,
-    seed: 42,
-    label: 'auto',
+    trainData: DEFAULT_TRAIN_DATA,
+    testData: DEFAULT_TEST_DATA,
+    rareLabel: DEFAULT_RARE_LABEL,
+    normalLabel: DEFAULT_NORMAL_LABEL,
+    json: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') out.help = true;
+    else if (a === '--json') out.json = true;
     else if (a === '--train') out.train = argv[++i];
-    else if (a === '--data') out.data = resolve(argv[++i]);
-    else if (a === '--ratio') out.ratio = Number(argv[++i]);
-    else if (a === '--seed') out.seed = Number(argv[++i]);
-    else if (a === '--label') out.label = argv[++i];
+    else if (a === '--train-data') out.trainData = resolve(argv[++i]);
+    else if (a === '--test-data') out.testData = resolve(argv[++i]);
+    else if (a === '--rare-label') out.rareLabel = String(argv[++i]);
+    else if (a === '--normal-label') out.normalLabel = String(argv[++i]);
     else throw new Error(`未知参数：${a}（用 --help 查看）`);
   }
   return out;
@@ -42,20 +48,26 @@ function parseArgs(argv) {
 function usage() {
   console.log(`Wafer 1NN 端到端测试
 
-用法：
-  node scripts/wafer-1nn.mjs [选项]
+默认模式（输出两份结果）：
+  npm run test:wafer
+  - 全量训练：Wafer_TRAIN 全部 1000 条
+  - 仅正常类：仅 label=1.0000000e+00 的 903 条
+  - 测试：Wafer_TEST 全量 6164 条
+
+自定义稀有类增强模式（单份结果）：
+  npm run test:wafer:custom
+  npm run test:wafer -- --train scripts/wafer_test/xxxx.json
+  - 训练：Wafer_TRAIN 非稀有类 + JSON 全部候选（标为稀有类）
+  - 原始稀有类排除；测试仍为 Wafer_TEST 全量
 
 选项：
-  --train default|<export.json>  训练集；默认 = Wafer 默认训练划分
-  --data <Wafer_TRAIN.txt>      原始数据（默认 public/data/Wafer_TRAIN.txt）
-  --ratio 0.2                   测试集比例（默认 0.2）
-  --seed 42                     分层划分随机种子
-  --label auto|target|base      导出文件训练时的标签策略（默认 auto）
+  --train default|<export.json>  训练模式；默认 default
+  --train-data <file>           原始训练集
+  --test-data <file>            原生测试集
+  --rare-label <label>          自定义候选的稀有类（默认 -1.0000000e+00）
+  --normal-label <label>        默认模式“仅正常类”的标签（默认 1.0000000e+00）
+  --json                        输出机器可读 JSON（供 suite 使用）
   -h, --help
-
-示例：
-  npm run test:wafer
-  npm run test:wafer -- --train exports/tsc2-candidates-all-new-xxx.json
 `);
 }
 
@@ -72,45 +84,6 @@ function parseUcr(text) {
     rows.push({ label, values });
   }
   return rows;
-}
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffle(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function splitStratified(rows, ratio, seed) {
-  const ratioClamped = Math.max(0, Math.min(0.9, Number.isFinite(ratio) ? ratio : 0.2));
-  const byClass = new Map();
-  for (const r of rows) {
-    if (!byClass.has(r.label)) byClass.set(r.label, []);
-    byClass.get(r.label).push(r);
-  }
-  const rng = mulberry32(seed >>> 0);
-  const train = [];
-  const test = [];
-  for (const label of [...byClass.keys()].sort()) {
-    const arr = shuffle(byClass.get(label), rng);
-    let nTest = arr.length > 1 ? Math.max(1, Math.round(arr.length * ratioClamped)) : 0;
-    if (nTest >= arr.length) nTest = arr.length - 1;
-    test.push(...arr.slice(0, nTest));
-    train.push(...arr.slice(nTest));
-  }
-  return { train, test, ratio: ratioClamped };
 }
 
 function euclid(a, b) {
@@ -139,22 +112,13 @@ function loadExport(path) {
     candidates = doc.batches.flatMap((b) => (Array.isArray(b.candidates) ? b.candidates : []));
   }
   if (!candidates.length) throw new Error(`导出文件里没有 candidates：${path}`);
-  const target = doc.target ?? {};
-  return { doc, candidates, target };
+  return { doc, candidates };
 }
 
-function labelFor(candidate, target, policy, testLabels) {
-  const targetLabel = String(target.key ?? target.name ?? 'target');
-  const baseLabel = candidate.baseClass != null ? String(candidate.baseClass) : null;
-  if (policy === 'base') {
-    if (baseLabel == null) throw new Error(`候选 ${candidate.id} 没有 baseClass，不能用 --label base`);
-    return baseLabel;
-  }
-  if (policy === 'target') return String(candidate.label ?? targetLabel);
-  /* auto：目标类在测试集里存在（缺类重建）→ 用目标类；否则按基源类。 */
-  if (testLabels.has(targetLabel)) return String(candidate.label ?? targetLabel);
-  if (baseLabel != null) return baseLabel;
-  return String(candidate.label ?? targetLabel);
+function countLabels(rows) {
+  const m = new Map();
+  for (const r of rows) m.set(r.label, (m.get(r.label) ?? 0) + 1);
+  return Object.fromEntries([...m.entries()].sort((a, b) => a[0].localeCompare(b[0])));
 }
 
 function classifyTable(test, train) {
@@ -193,63 +157,117 @@ function fmtPct(x) { return `${(x * 100).toFixed(2)}%`; }
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) { usage(); process.exit(0); }
-if (!['auto', 'target', 'base'].includes(args.label)) throw new Error(`--label 只能是 auto/target/base，收到 ${args.label}`);
+const isCustom = args.train !== 'default';
 
-const rawRows = parseUcr(readFileSync(args.data, 'utf8'));
-if (!rawRows.length) throw new Error(`数据为空：${args.data}`);
-const lengths = new Set(rawRows.map((r) => r.values.length));
-if (lengths.size !== 1) throw new Error(`样本长度不一致：${[...lengths].join(', ')}`);
-const L = rawRows[0].values.length;
-const split = splitStratified(rawRows, args.ratio, args.seed);
-const testLabels = new Set(split.test.map((r) => r.label));
+const rawTrain = parseUcr(readFileSync(args.trainData, 'utf8'));
+const rawTest = parseUcr(readFileSync(args.testData, 'utf8'));
+if (!rawTrain.length) throw new Error(`训练集为空：${args.trainData}`);
+if (!rawTest.length) throw new Error(`测试集为空：${args.testData}`);
+const allLengths = new Set([...rawTrain, ...rawTest].map((r) => r.values.length));
+if (allLengths.size !== 1) throw new Error(`训练/测试样本长度不一致：${[...allLengths].join(', ')}`);
+const L = rawTrain[0].values.length;
+const testCounts = countLabels(rawTest);
 
-let trainRows;
-let sourceInfo;
-if (args.train === 'default') {
-  trainRows = split.train.map((r) => ({ values: r.values, label: r.label }));
-  sourceInfo = 'default（Wafer 训练划分）';
+const runs = [];
+if (!isCustom) {
+  runs.push({
+    key: 'default-full',
+    title: '默认 / 全量训练',
+    sourceInfo: 'Wafer_TRAIN 全量',
+    trainRows: rawTrain.map((r) => ({ values: r.values, label: r.label })),
+  });
+  const normalRows = rawTrain.filter((r) => r.label === args.normalLabel);
+  if (!normalRows.length) throw new Error(`默认正常类标签没有样本：${args.normalLabel}`);
+  runs.push({
+    key: 'default-normal-only',
+    title: `默认 / 仅标签 ${args.normalLabel}`,
+    sourceInfo: `Wafer_TRAIN 仅 ${args.normalLabel}`,
+    trainRows: normalRows.map((r) => ({ values: r.values, label: r.label })),
+  });
 } else {
   const exportPath = resolve(args.train);
   const loaded = loadExport(exportPath);
-  if (loaded.doc.dataset?.length && Number(loaded.doc.dataset.length) !== L) {
-    throw new Error(`导出文件长度 ${loaded.doc.dataset.length} 与 Wafer 长度 ${L} 不一致`);
-  }
-  trainRows = loaded.candidates.map((c) => {
+  const rareLabel = args.rareLabel;
+  const normal = rawTrain.filter((r) => r.label !== rareLabel);
+  if (!normal.length) throw new Error(`原始训练集中没有非稀有类样本（稀有标签 ${rareLabel}）`);
+  const generated = loaded.candidates.map((c) => {
     if (!Array.isArray(c.values) || c.values.length !== L) {
       throw new Error(`候选 ${c.id ?? '?'} 的 values 长度不是 ${L}`);
     }
-    return { values: c.values.map(Number), label: labelFor(c, loaded.target, args.label, testLabels) };
+    return { values: c.values.map(Number), label: rareLabel };
   });
-  const classes = new Set(trainRows.map((r) => r.label));
-  sourceInfo = `导出文件（${loaded.candidates.length} 条 / ${classes.size} 类；标签策略 ${args.label}）`;
-  if (classes.size === 1) {
-    console.warn(`⚠ 导出训练集只有 1 个类别（${[...classes][0]}）——1NN 只会预测该类。`);
+  runs.push({
+    key: `custom:${basename(exportPath)}`,
+    title: `自定义 / ${basename(exportPath)}`,
+    sourceInfo: `正常类 ${normal.length} 条 + 增强稀有类 ${generated.length} 条；原始稀有类排除 ${rawTrain.length - normal.length} 条`,
+    trainRows: [...normal.map((r) => ({ values: r.values, label: r.label })), ...generated],
+    exportPath,
+    generatedCount: generated.length,
+  });
+}
+
+const results = runs.map((run) => {
+  const t0 = performance.now();
+  const rows = classifyTable(rawTest, run.trainRows);
+  const elapsedMs = performance.now() - t0;
+  const r = report(rows);
+  return {
+    key: run.key,
+    title: run.title,
+    sourceInfo: run.sourceInfo,
+    trainCount: run.trainRows.length,
+    trainCounts: countLabels(run.trainRows),
+    testCount: rawTest.length,
+    testCounts,
+    acc: r.acc,
+    correct: r.correct,
+    total: r.total,
+    macroF1: r.macroF1,
+    per: r.per,
+    cm: r.cm,
+    labels: r.labels,
+    elapsedMs,
+    ...(run.exportPath ? { exportPath: run.exportPath, generatedCount: run.generatedCount } : {}),
+  };
+});
+
+if (args.json) {
+  const payload = {
+    mode: isCustom ? 'custom' : 'default',
+    trainData: args.trainData,
+    testData: args.testData,
+    length: L,
+    testCount: rawTest.length,
+    testCounts,
+    normalLabel: args.normalLabel,
+    rareLabel: args.rareLabel,
+    results,
+  };
+  console.log(JSON.stringify(payload));
+} else {
+  console.log(`模式        : ${isCustom ? 'custom' : 'default'}`);
+  console.log(`训练数据    : ${args.trainData}`);
+  console.log(`测试数据    : ${args.testData}`);
+  console.log(`样本长度    : ${L}`);
+  console.log(`测试集      : ${rawTest.length} 条（原生完整 test）`);
+  console.log(`测试类分布  : ${Object.entries(testCounts).map(([k, v]) => `${k}:${v}`).join(' · ')}`);
+  console.log(`分类器      : 1NN（原始值欧氏距离，无归一化）`);
+  for (const r of results) {
+    console.log(`\n=== ${r.title} ===`);
+    console.log(`训练集      : ${r.sourceInfo} · ${r.trainCount} 条`);
+    console.log(`训练类分布  : ${Object.entries(r.trainCounts).map(([k, v]) => `${k}:${v}`).join(' · ')}`);
+    console.log(`准确率      : ${fmtPct(r.acc)}（${r.correct}/${r.total}）`);
+    console.log(`Macro-F1    : ${r.macroF1.toFixed(4)}`);
+    console.log(`耗时        : ${r.elapsedMs.toFixed(1)} ms`);
+    console.log('\n每类：');
+    console.log('  label              precision  recall    f1       support');
+    for (const x of r.per) {
+      console.log(`  ${x.label.padEnd(18)} ${fmtPct(x.precision).padStart(9)} ${fmtPct(x.recall).padStart(9)} ${x.f1.toFixed(4).padStart(8)} ${String(x.support).padStart(8)}`);
+    }
+    console.log('\n混淆矩阵（行=真实，列=预测）：');
+    console.log(`  ${''.padEnd(18)} ${r.labels.map((x) => x.padStart(10)).join(' ')}`);
+    for (const a of r.labels) {
+      console.log(`  ${a.padEnd(18)} ${r.labels.map((b) => String(r.cm[a][b]).padStart(10)).join(' ')}`);
+    }
   }
-}
-
-if (!trainRows.length) throw new Error('训练集为空');
-if (!split.test.length) throw new Error('测试集为空；请增大 --ratio');
-
-const t0 = performance.now();
-const rows = classifyTable(split.test, trainRows);
-const elapsed = performance.now() - t0;
-const r = report(rows);
-
-console.log(`数据集      : ${args.data}`);
-console.log(`样本长度    : ${L} · 原始 ${rawRows.length} 条 · 留出比例 ${(split.ratio * 100).toFixed(0)}% · seed ${args.seed}`);
-console.log(`训练集      : ${sourceInfo} · ${trainRows.length} 条`);
-console.log(`测试集      : ${split.test.length} 条`);
-console.log(`分类器      : 1NN（原始值欧氏距离，无归一化）`);
-console.log(`准确率      : ${fmtPct(r.acc)}（${r.correct}/${r.total}）`);
-console.log(`Macro-F1    : ${r.macroF1.toFixed(4)}`);
-console.log(`耗时        : ${elapsed.toFixed(1)} ms`);
-console.log('\n每类：');
-console.log('  label              precision  recall    f1       support');
-for (const x of r.per) {
-  console.log(`  ${x.label.padEnd(18)} ${fmtPct(x.precision).padStart(9)} ${fmtPct(x.recall).padStart(9)} ${x.f1.toFixed(4).padStart(8)} ${String(x.support).padStart(8)}`);
-}
-console.log('\n混淆矩阵（行=真实，列=预测）：');
-console.log(`  ${''.padEnd(18)} ${r.labels.map((x) => x.padStart(10)).join(' ')}`);
-for (const a of r.labels) {
-  console.log(`  ${a.padEnd(18)} ${r.labels.map((b) => String(r.cm[a][b]).padStart(10)).join(' ')}`);
 }
