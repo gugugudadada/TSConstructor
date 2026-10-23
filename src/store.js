@@ -48,6 +48,7 @@ export const store = reactive({
 
   // ── 参考素材（副列 → 主列） ──
   refs: [],                // [{id, sampleId, roles:['base'|'segment'|'texture'], seg:[i0,i1]|null}]
+  activeBaseId: null,      // 当前工作模板使用的基源（可点击素材架切换）
 
   // ── P1 结构视图（单源配置；检测本身复用 engine/structures.js） ──
   structureConfig: { sensitivity: 'normal' },
@@ -151,6 +152,7 @@ export async function init(datasetId = DATASETS[0].id) {
     rec('session-init', `${ds.samples.length} 条 · ${ds.classes.length} 类 · ${meta.name} · 基底冻结（PCA 2D）`);
     store.customStructures = [];
     store.activeTarget = null;
+    store.activeBaseId = null;
     // 首开不预设目标类别（D1：目标模式由人声明）——素材架 / 画布 / 配方默认全空。
     // 登记表的 defaultClass 仅作为「缺类重建」弹窗的默认选中项（见 TargetPanel）。
     if (meta.defaultBasis && meta.defaultBasis !== 'pca') setBasisMethod(meta.defaultBasis);
@@ -243,6 +245,7 @@ function onTargetChanged() {
   store.selectedStepId = null;
   store.customStructures = [];
   store.activeTarget = null;
+  store.activeBaseId = null;
   store.candidates = [];
   store.batches = [];
   store.lastBatch = null;
@@ -338,6 +341,7 @@ export function addRef(sampleId, roles = ['segment']) {
   if (ex) {
     for (const r of rs) if (!ex.roles.includes(r)) ex.roles.push(r);
     if (ex.roles.length) rec('refs', `${sampleId} 角色 → ${roleText(ex.roles)}`);
+    if (ex.roles.includes('base') && !store.activeBaseId) store.activeBaseId = sampleId;
     return true;
   }
   const L = store.length;
@@ -347,20 +351,29 @@ export function addRef(sampleId, roles = ['segment']) {
     roles: [...rs],
     seg: [Math.floor(L * 0.4), Math.floor(L * 0.72)],
   });
+  if (rs.includes('base') && !store.activeBaseId) store.activeBaseId = sampleId;
   rec('refs', `加入素材 ${sampleId}（${roleText(rs)}）`);
   return true;
 }
 export function removeRef(refId) {
   const i = store.refs.findIndex((r) => r.id === refId);
   if (i < 0) return;
-  rec('refs', `移出素材 ${store.refs[i].sampleId}`);
+  const removed = store.refs[i];
+  rec('refs', `移出素材 ${removed.sampleId}`);
   store.refs.splice(i, 1);
+  if (store.activeBaseId === removed.sampleId) {
+    store.activeBaseId = baseRefs()[0]?.sampleId ?? null;
+  }
 }
 export function setRefRoles(refId, roles) {
   const r = store.refs.find((x) => x.id === refId);
   if (!r) return;
   if (!roles.length) { removeRef(refId); return; }
   r.roles = [...new Set(roles)];
+  if (!r.roles.includes('base') && store.activeBaseId === r.sampleId) {
+    store.activeBaseId = baseRefs()[0]?.sampleId ?? null;
+  }
+  if (r.roles.includes('base') && !store.activeBaseId) store.activeBaseId = r.sampleId;
   rec('refs', `${r.sampleId} 角色 → ${roleText(r.roles)}`);
 }
 export function toggleRefRole(refId, role) {
@@ -368,6 +381,14 @@ export function toggleRefRole(refId, role) {
   if (!r) return;
   if (r.roles.includes(role)) setRefRoles(refId, r.roles.filter((x) => x !== role));
   else setRefRoles(refId, [...r.roles, role]);
+}
+export function selectBase(sampleId) {
+  const r = refsOf(sampleId);
+  if (!r?.roles.includes('base')) return false;
+  store.activeBaseId = sampleId;
+  store.currentId = sampleId;
+  rec('refs', `切换工作基源 → ${sampleId}`);
+  return true;
 }
 export function setRefSeg(refId, seg) {
   const r = store.refs.find((x) => x.id === refId);
@@ -377,11 +398,14 @@ export function setRefSeg(refId, seg) {
   const b = Math.max(0, Math.min(lim, Math.max(seg[0], seg[1])));
   r.seg = [Math.round(a), Math.round(b)];
 }
-export function clearRefs() { store.refs = []; rec('refs', '清空素材'); }
+export function clearRefs() { store.refs = []; store.activeBaseId = null; rec('refs', '清空素材'); }
 export function baseRefs() { return store.refs.filter((r) => r.roles.includes('base')); }
 export function segmentRefs() { return store.refs.filter((r) => r.roles.includes('segment')); }
 export function textureRefs() { return store.refs.filter((r) => r.roles.includes('texture')); }
-export function primaryBaseId() { return baseRefs()[0]?.sampleId ?? null; }
+export function primaryBaseId() {
+  const bases = baseRefs();
+  return (bases.find((r) => r.sampleId === store.activeBaseId) ?? bases[0])?.sampleId ?? null;
+}
 export function refClassSummary() {
   const m = new Map();
   for (const r of store.refs) {
@@ -812,7 +836,7 @@ export function generateCandidates() {
   const tPool = (textureRefs().length ? textureRefs() : segmentRefs()).map((r) => r.sampleId);
   if (!tPool.length) tPool.push(...bPool);
   const axes = { ...store.axes };
-  const basePool = axes.source && bPool.length > 1 ? bPool : [bPool[0]];
+  const basePool = axes.source && bPool.length > 1 ? bPool : [primaryBaseId() ?? bPool[0]];
   const count = Math.max(1, Math.min(100, Math.round(Number(store.count) || 1)));
   if (store.count !== count) store.count = count;
   const seed = Number(store.seed) >>> 0;

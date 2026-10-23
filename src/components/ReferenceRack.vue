@@ -5,7 +5,7 @@
 import { computed, ref } from 'vue';
 import {
   store, removeRef, toggleRefRole, setRefSeg, refClassSummary, valuesOf,
-  classLabelOf, primaryBaseId, sampleOf,
+  classLabelOf, primaryBaseId, sampleOf, selectBase,
 } from '../store.js';
 
 const summary = computed(() => refClassSummary());
@@ -51,24 +51,30 @@ const ROLES = [['base', '基源'], ['segment', '片段'], ['texture', '纹理']]
         素材架为空——在结构面或列表里勾选样本，用上方 <b>＋基源 / ＋片段 / ＋纹理</b> 成批加入。
         允许并鼓励从<b>不同旧类别</b>取材（跨类参考）。
       </div>
-      <div v-for="r in store.refs" :key="r.id" class="rk-row" :class="{ proto: r.sampleId === baseId }">
+      <div
+        v-for="r in store.refs" :key="r.id" class="rk-row"
+        :class="{ proto: r.sampleId === baseId, 'base-row': r.roles.includes('base') }"
+        :title="r.roles.includes('base') ? (r.sampleId === baseId ? '当前工作基源' : '点击切换为工作基源') : ''"
+        @click="r.roles.includes('base') && selectBase(r.sampleId)"
+      >
         <div class="rk-top">
           <span class="rk-id">{{ r.sampleId }}</span>
           <span class="rk-cls">类 {{ classLabelOf(sampleOf(r.sampleId)?.class) }}</span>
-          <span v-if="r.sampleId === baseId" class="rk-cls" title="主基源：工作模板在它身上构造">★ 主基源</span>
-          <button class="rk-x" title="移出素材架" @click="removeRef(r.id)">✕</button>
+          <span v-if="r.sampleId === baseId" class="rk-cls" title="工作模板在它身上构造">★ 工作基源</span>
+          <span v-else-if="r.roles.includes('base')" class="rk-cls">点击切换</span>
+          <button class="rk-x" title="移出素材架" @click.stop="removeRef(r.id)">✕</button>
         </div>
         <div class="rk-roles">
           <button
             v-for="[key, name] in ROLES" :key="key" class="rk-role" :class="{ on: r.roles.includes(key) }"
             :title="`切换角色：${name}${key === 'base' ? '（承载体）' : key === 'segment' ? '（克隆供体）' : '（纹理供体）'}`"
-            @click="toggleRefRole(r.id, key)"
+            @click.stop="toggleRefRole(r.id, key)"
           >{{ name }}</button>
           <span v-if="r.roles.includes('segment')" class="rk-cls">片段区间 {{ r.seg[0] }}–{{ r.seg[1] }}</span>
         </div>
         <svg
           v-if="r.roles.includes('segment')" class="rk-seg-svg" :viewBox="`0 0 ${SEG_W} ${SEG_H}`"
-          @mousedown.prevent="segDown($event, r)" @mousemove="segMove" @mouseup="segUp(r)" @mouseleave="segUp(r)"
+          @click.stop @mousedown.prevent="segDown($event, r)" @mousemove="segMove" @mouseup="segUp(r)" @mouseleave="segUp(r)"
         >
           <polyline :points="polyOf(r.sampleId)" fill="none" stroke="#898781" stroke-width="1" vector-effect="non-scaling-stroke" />
           <rect :x="segX(r.seg[0])" y="2" :width="Math.max(1, segX(r.seg[1]) - segX(r.seg[0]))" :height="SEG_H - 4" fill="rgba(42,120,214,0.14)">

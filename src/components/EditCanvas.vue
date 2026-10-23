@@ -10,6 +10,7 @@ import {
   selectCustomStructure, setStructureTarget, clearActiveTarget,
 } from '../store.js';
 import { detectEditableStructures, STRUCTURE_TYPES } from '../engine/structureAdapter.js';
+import { matchTarget } from '../engine/structureMatching.js';
 import SourceCorner from './SourceCorner.vue';
 
 const svgEl = ref(null);
@@ -124,6 +125,11 @@ const STRUCTURE_SENSITIVITY_LABELS = { strict: '严格', normal: '标准', loose
 const structureResult = computed(() => detectEditableStructures(baseVals.value, store.structureConfig.sensitivity));
 const visibleStructures = computed(() => structureResult.value.instances.filter((s) => store.structureView.types[s.type]));
 const selectedStructure = computed(() => visibleStructures.value.find((s) => s.id === store.structureView.selectedId) ?? null);
+const targetMatch = computed(() => {
+  if (!store.activeTarget || !baseVals.value.length) return null;
+  return matchTarget(store.activeTarget, baseVals.value, { sensitivity: store.structureConfig.sensitivity });
+});
+const targetSpan = computed(() => (targetMatch.value?.status === 'matched' ? targetMatch.value.span : null));
 function structureMeta(type) { return STRUCTURE_META[type] ?? STRUCTURE_TYPES[0]; }
 function structureIsInterval(s) { return s.type === 'plateau' || s.type === 'ramp'; }
 function structureSummary(s) {
@@ -214,7 +220,9 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
       </span>
       <span class="ci-right">
         <span v-if="store.activeTarget" class="ci-region ci-target" :title="`当前操作目标：${store.activeTarget.label}`">
-          目标 {{ store.activeTarget.label }}<button class="ci-region-x" title="解除目标绑定" @click.stop="clearActiveTarget()">✕</button>
+          目标 {{ store.activeTarget.label }}
+          <span v-if="targetMatch && targetMatch.status !== 'matched'" class="ci-target-miss" :title="targetMatch.reason">未检测到</span>
+          <button class="ci-region-x" title="解除目标绑定" @click.stop="clearActiveTarget()">✕</button>
         </span>
         <span v-for="r in store.regions" :key="r.id" class="ci-region" :class="{ cur: r.id === store.selectedRegionId }" :title="`R${r.id} · ${r.span[0]}–${r.span[1]} · 点击选中`" @click="selectRegion(r.id)">
           R{{ r.id }} {{ r.span[0] }}–{{ r.span[1] }}<button class="ci-region-x" title="删除该选区" @click.stop="removeRegion(r.id)">✕</button>
@@ -229,6 +237,15 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
         <g v-for="r in store.regions" :key="r.id">
           <rect :x="X(r.span[0])" :y="PAD.t" :width="Math.max(1, X(r.span[1]) - X(r.span[0]))" :height="VB_H - PAD.t - PAD.b" :fill="r.id === store.selectedRegionId ? '#f0efec' : '#f7f6f3'" />
           <text :x="X(r.span[0]) + 3" :y="PAD.t + 9" class="ci-axis">R{{ r.id }}</text>
+        </g>
+        <g v-if="targetSpan" class="ci-target-band" pointer-events="none">
+          <rect
+            :x="X(targetSpan[0])" :y="PAD.t" :width="Math.max(1, X(targetSpan[1]) - X(targetSpan[0]))" :height="VB_H - PAD.t - PAD.b"
+            rx="2" fill="rgba(235,104,52,0.045)" stroke="#eb6834" stroke-width="1.2" stroke-dasharray="5 3"
+          >
+            <title>当前目标在新基源上的迁移位置</title>
+          </rect>
+          <text :x="X(targetSpan[0]) + 3" :y="PAD.t + 20" class="ci-target-label">目标</text>
         </g>
         <g v-if="cloneTarget" pointer-events="none">
           <rect :x="X(cloneTarget.start)" :y="PAD.t" :width="Math.max(1, X(cloneTarget.end) - X(cloneTarget.start))" :height="VB_H - PAD.t - PAD.b" fill="rgba(42,120,214,0.08)">
