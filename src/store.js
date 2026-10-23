@@ -561,7 +561,7 @@ export function addScale({ span, factor = 1.2, feather = 8 }) {
   const sp = normSpan(span);
   if (!sp || sp[1] - sp[0] < 2) { toast('缩放需要至少 3 点的选区'); return; }
   const f = Math.max(0.5, Math.min(2, Number(factor) || 1));
-  const ft = Math.max(1, Math.min(20, Math.round(Number(feather) || 8)));
+  const ft = Math.max(0, Math.min(20, Math.round(Number(feather) || 0)));
   pushUndo('缩放');
   const step = { id: newStepId(), kind: 'scale', enabled: true, span: sp, factor: f, feather: ft, vary: defaultVary('scale') };
   store.steps.push(step);
@@ -570,18 +570,18 @@ export function addScale({ span, factor = 1.2, feather = 8 }) {
   rec('recipe', `缩放 → 配方（${sp[0]}–${sp[1]}，×${f.toFixed(2)}）`);
 }
 
-export function addShift({ span, delta = 4, feather = 8 }) {
+export function addShift({ span, delta = 4, feather = 0 }) {
   const sp = normSpan(span);
-  if (!sp || sp[1] - sp[0] < 2) { toast('水平平移需要至少 3 点的选区'); return; }
+  if (!sp || sp[1] - sp[0] < 2) { toast('平移需要至少 3 点的选区'); return; }
   const n = sp[1] - sp[0] + 1;
   const d = Math.round(Math.max(-(n - 1), Math.min(n - 1, Number(delta) || 0)));
-  const ft = Math.max(1, Math.min(20, Math.round(Number(feather) || 8)));
-  pushUndo('水平平移');
+  const ft = Math.max(0, Math.min(20, Math.round(Number(feather) || 0)));
+  pushUndo('平移');
   const step = { id: newStepId(), kind: 'shift', enabled: true, span: sp, delta: d, feather: ft, vary: defaultVary('shift') };
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
-  rec('recipe', `水平平移 → 配方（${sp[0]}–${sp[1]}，${d >= 0 ? '+' : ''}${d} 点）`);
+  rec('recipe', `平移 → 配方（${sp[0]}–${sp[1]}，${d >= 0 ? '+' : ''}${d} 点）`);
 }
 
 export function updateStep(id, patch) {
@@ -948,7 +948,7 @@ function sanitizeImportedStep(raw, ctx) {
     if (!span || span[1] - span[0] < 2) return null;
     s.span = span;
     s.factor = importNum(raw.factor, 1, 0.5, 2);
-    s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
+    s.feather = Math.round(importNum(raw.feather, 8, 0, 20));
     return s;
   }
   if (kind === 'shift') {
@@ -957,7 +957,7 @@ function sanitizeImportedStep(raw, ctx) {
     const n = span[1] - span[0] + 1;
     s.span = span;
     s.delta = Math.round(importNum(raw.delta, 4, -(n - 1), n - 1));
-    s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
+    s.feather = Math.round(importNum(raw.feather, 0, 0, 20));
     return s;
   }
   if (kind === 'transplant') {

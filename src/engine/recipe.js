@@ -2,7 +2,7 @@
    = 把"直接编辑 + 组件组合"整理为**结构化、可复用、可变化**的配方，并在不同源样本上执行。
 
    设计要点（对应 idea 的 RQ1/RQ2）：
-   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 水平平移 / 幅值缩放；
+   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 平移 / 幅值缩放；
      每步都结构化记录对象、区间、参数、源样本，而不是只存最终数组。
    · 每步带 `vary`：哪些维度允许在生成时变化（位置 / 宽度 / 强度 / 源）。
    · runRecipe：给定基源样本 + 配方 → 结果曲线 + 逐级中间结果 + **逐点归因贡献**。
@@ -331,33 +331,47 @@ export function applyStep(cur, step, ctx) {
       let pivot = 0;
       for (let k = 0; k < n; k++) pivot += cur[d0 + k];
       pivot /= n;
-      const seam = Math.max(1, Math.min(Math.round(step.feather ?? 8), Math.floor(n / 3)));
+      const seam = Math.max(0, Math.min(Math.round(step.feather ?? 8), Math.floor(n / 3)));
       const out = cur.slice();
       for (let k = 0; k < n; k++) {
         let w = 1;
-        if (k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
-        else if (k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
+        if (seam > 0 && k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
+        else if (seam > 0 && k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
         out[d0 + k] = cur[d0 + k] + (factor - 1) * (cur[d0 + k] - pivot) * w;
       }
       return { values: out, unit: '×' };
     }
     case 'shift': {
-      /* 水平平移：在选区内把波形整体左右平移，区间外不变；两端余弦羽化回原位。 */
+      /* 平移：把选区内的这段波形整体搬到左/右 delta 点（刚体平移）。
+         源区间先用左右外侧值平滑填桥，再把原段写入落点；羽化只作用于落点两端。 */
       if (!step.span) return { values: null, reason: '缺少区间' };
       const d0 = clamp(Math.round(Math.min(step.span[0], step.span[1])), 0, L - 1);
       const d1 = clamp(Math.round(Math.max(step.span[0], step.span[1])), 0, L - 1);
       const n = d1 - d0 + 1;
       if (n < 3) return { values: null, reason: '区间过短（至少 3 点）' };
-      const delta = clamp(Math.round(Number.isFinite(step.delta) ? step.delta : 0), -(n - 1), n - 1);
+      const delta = Math.round(Number.isFinite(step.delta) ? step.delta : 0);
       if (!delta) return { values: cur.slice(), unit: '点' };
-      const seam = Math.max(1, Math.min(Math.round(step.feather ?? 8), Math.floor(n / 3)));
+      const seg = cur.slice(d0, d1 + 1);
       const out = cur.slice();
+
+      /* 源区间留下的空缺：用左右外侧点做平滑桥接，避免整段残留。 */
+      const y0 = cur[Math.max(0, d0 - 1)];
+      const y1 = cur[Math.min(L - 1, d1 + 1)];
       for (let k = 0; k < n; k++) {
-        const src = clamp(k - delta, 0, n - 1);
+        const t = k / (n - 1);
+        const s = 0.5 - 0.5 * Math.cos(Math.PI * t);
+        out[d0 + k] = y0 + (y1 - y0) * s;
+      }
+
+      /* 落点写入：源段逐点平移；羽化 0 = 完全刚体平移。 */
+      const seam = Math.max(0, Math.min(Math.round(step.feather ?? 0), Math.floor(n / 3)));
+      for (let k = 0; k < n; k++) {
+        const dst = d0 + k + delta;
+        if (dst < 0 || dst >= L) continue;
         let w = 1;
-        if (k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
-        else if (k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
-        out[d0 + k] = cur[d0 + k] * (1 - w) + cur[d0 + src] * w;
+        if (seam > 0 && k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
+        else if (seam > 0 && k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
+        out[dst] = cur[dst] * (1 - w) + seg[k] * w;
       }
       return { values: out, unit: '点' };
     }
@@ -453,7 +467,7 @@ export function stepLabel(step) {
     case 'texture': return '纹理';
     case 'erase': return '区间擦除';
     case 'scale': return '缩放';
-    case 'shift': return '水平平移';
+    case 'shift': return '平移';
     default: return step.kind;
   }
 }

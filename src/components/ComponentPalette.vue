@@ -27,8 +27,8 @@ function addScaleHere() {
 }
 function addShiftHere() {
   const r = activeRegion();
-  if (!r) { toast('水平平移需要当前选区——先用「选区」工具划一段'); return; }
-  addShift({ span: r.span, delta: 4, feather: 8 });
+  if (!r) { toast('平移需要当前选区——先用「选区」工具划一段'); return; }
+  addShift({ span: r.span, delta: 4, feather: 0 });
 }
 function addCloneHere() {
   addClone({ dstSpan: activeRegion()?.span ?? null });
@@ -61,8 +61,8 @@ function addTextureHere() {
       <button class="pal-item" title="用选区两端点做平滑桥接，移除区间内原有形状" @click="addEraseHere()">
         <span class="pal-glyph">⌫</span><span class="pal-name">区间擦除</span><span class="pal-note">两端平滑连接</span>
       </button>
-      <button class="pal-item" title="在选区内把波形整体左右平移（两端余弦羽化）" @click="addShiftHere()">
-        <span class="pal-glyph">↔</span><span class="pal-name">水平平移</span><span class="pal-note">区间左右移动</span>
+      <button class="pal-item" title="把选区内的波形整体左右平移；羽化 0 = 完全刚体平移" @click="addShiftHere()">
+        <span class="pal-glyph">↔</span><span class="pal-name">平移</span><span class="pal-note">区间左右移动</span>
       </button>
       <button class="pal-item" title="在选区内按局部均值缩放幅值（两端余弦羽化）" @click="addScaleHere()">
         <span class="pal-glyph">↕</span><span class="pal-name">缩放</span><span class="pal-note">幅值缩放</span>

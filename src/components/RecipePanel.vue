@@ -42,9 +42,9 @@ function paramsFor(step) {
   if (step.kind === 'erase') return [];
   if (step.kind === 'shift') {
     const max = Math.max(1, Math.abs((step.span?.[1] ?? 1) - (step.span?.[0] ?? 0)));
-    return [{ key: 'delta', label: '位移', min: -max, max, step: 1 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
+    return [{ key: 'delta', label: '位移', min: -max, max, step: 1 }, { key: 'feather', label: '羽化', min: 0, max: 20, step: 1 }];
   }
-  if (step.kind === 'scale') return [{ key: 'factor', label: '缩放', min: 0.5, max: 2, step: 0.01 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
+  if (step.kind === 'scale') return [{ key: 'factor', label: '缩放', min: 0.5, max: 2, step: 0.01 }, { key: 'feather', label: '羽化', min: 0, max: 20, step: 1 }];
   if (step.kind === 'texture') return [{ key: 'amount', label: '强度', min: 0, max: 1.5, step: 0.02 }, { key: 'win', label: '趋势窗', min: 3, max: 31, step: 2 }];
   return [];
 }
