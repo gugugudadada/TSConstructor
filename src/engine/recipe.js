@@ -390,6 +390,10 @@ export function runRecipe(baseValues, steps, ctx = {}) {
   for (const step of steps) {
     if (step.enabled === false) continue;
     const prev = cur;
+    if (step.targetStatus && step.targetStatus.status !== 'matched') {
+      stages.push({ id: step.id, kind: step.kind, label: stepLabel(step), values: prev, note: step.targetStatus.reason || '目标匹配失败', failed: true });
+      continue;
+    }
     const r = applyStep(cur, step, runCtx);
     if (!r.values) {
       stages.push({ id: step.id, kind: step.kind, label: stepLabel(step), values: prev, note: r.reason, failed: true });
@@ -638,7 +642,9 @@ export function instantiateSteps(steps, opts) {
   for (const step of steps) {
     if (step.enabled === false) continue;
     const s = JSON.parse(JSON.stringify(step));
-    const vary = step.vary ?? defaultVary(step.kind);
+    const vary = { ...(step.vary ?? defaultVary(step.kind)) };
+    /* 目标步骤的位置由结构匹配/前序平移决定；不要再独立做 vary.pos 漂移。 */
+    if (step.target) vary.pos = false;
     const parts = [];
     if (s.kind === 'component') {
       if (vary.pos) {

@@ -6,7 +6,8 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import {
   store, workRun, templateValues,
   addRegion, removeRegion, selectRegion, setPreview, clearPreview, commitPreview,
-  primaryBaseId, sampleOf, fmtNum,
+  primaryBaseId, sampleOf, fmtNum, activeRegion, addCustomStructure,
+  selectCustomStructure, setStructureTarget, clearActiveTarget,
 } from '../store.js';
 import { detectEditableStructures, STRUCTURE_TYPES } from '../engine/structureAdapter.js';
 import SourceCorner from './SourceCorner.vue';
@@ -144,7 +145,11 @@ function structureSummary(s) {
   }
   return bits.join(' · ');
 }
-function selectStructure(id) { store.structureView.selectedId = id; }
+function selectStructure(id) {
+  store.structureView.selectedId = id;
+  const s = visibleStructures.value.find((x) => x.id === id);
+  if (s) setStructureTarget(s);
+}
 function toggleStructureType(key) {
   store.structureView.types[key] = !store.structureView.types[key];
   store.structureView.selectedId = null;
@@ -153,7 +158,22 @@ function setStructureSensitivity(e) {
   store.structureConfig.sensitivity = e.target.value;
   store.structureView.selectedId = null;
 }
-watch(baseId, () => { store.structureView.selectedId = null; });
+function saveCustomStructure() {
+  const r = activeRegion();
+  if (!r) { return; }
+  const name = window.prompt('自定义结构名称', `结构 ${store.customStructures.length + 1}`);
+  if (name == null) return;
+  addCustomStructure(name);
+}
+function bindSelectedStructure() {
+  if (selectedStructure.value) setStructureTarget(selectedStructure.value);
+}
+function chooseCustomStructure(id) {
+  selectCustomStructure(id);
+}
+watch(baseId, () => {
+  store.structureView.selectedId = null;
+});
 
 /* 克隆落点带：跟随当前/首个克隆步，长度 = 源段长度。 */
 const cloneStep = computed(() => {
@@ -193,6 +213,9 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
         <button class="ci-tool" :class="{ on: store.structureView.show }" :disabled="baseRunEmpty" title="显示/隐藏基源结构检测（平台 / 峰 / 谷 / 斜坡）" @click="store.structureView.show = !store.structureView.show">结构</button>
       </span>
       <span class="ci-right">
+        <span v-if="store.activeTarget" class="ci-region ci-target" :title="`当前操作目标：${store.activeTarget.label}`">
+          目标 {{ store.activeTarget.label }}<button class="ci-region-x" title="解除目标绑定" @click.stop="clearActiveTarget()">✕</button>
+        </span>
         <span v-for="r in store.regions" :key="r.id" class="ci-region" :class="{ cur: r.id === store.selectedRegionId }" :title="`R${r.id} · ${r.span[0]}–${r.span[1]} · 点击选中`" @click="selectRegion(r.id)">
           R{{ r.id }} {{ r.span[0] }}–{{ r.span[1] }}<button class="ci-region-x" title="删除该选区" @click.stop="removeRegion(r.id)">✕</button>
         </span>
@@ -301,7 +324,10 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
           </select>
         </span>
       </div>
-      <div v-if="selectedStructure" class="ci-struct-detail">{{ structureSummary(selectedStructure) }}</div>
+      <div v-if="selectedStructure" class="ci-struct-detail">
+        <span>{{ structureSummary(selectedStructure) }}</span>
+        <button class="btn xs" title="把当前结构设为后续操作的目标；迁移基源时会自动匹配相似结构" @click="bindSelectedStructure">设为操作目标</button>
+      </div>
       <div class="ci-struct-list">
         <button
           v-for="s in visibleStructures" :key="s.id" class="ci-struct-chip"
@@ -314,6 +340,16 @@ onBeforeUnmount(() => { ro?.disconnect(); clearPreview(); });
         <span v-if="!visibleStructures.length" class="hint">
           {{ structureResult.meta.counts.total ? '当前类型筛选下无结构。' : '未检测到结构；可切换灵敏度或类型。' }}
         </span>
+      </div>
+      <div class="ci-struct-custom">
+        <span class="hint">自定义结构</span>
+        <button
+          v-for="c in store.customStructures" :key="c.id" class="ci-struct-chip"
+          :class="{ on: store.activeTarget?.id === `custom:${c.id}` }"
+          :title="`${c.name} · ${c.span[0]}–${c.span[1]} · 点击作为操作目标`"
+          @click="chooseCustomStructure(c.id)"
+        >{{ c.name }} · {{ c.width }} 点</button>
+        <button class="btn xs ghost" :disabled="!activeRegion()" title="把当前选区保存为可迁移的自定义结构模板" @click="saveCustomStructure">＋ 当前选区</button>
       </div>
     </div>
   </div>

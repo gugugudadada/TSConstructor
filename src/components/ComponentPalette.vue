@@ -4,31 +4,34 @@
 import { computed } from 'vue';
 import {
   addComponent, addWarp, addErase, addScale, addShift, addClone, addTexture,
-  activeRegion, componentByKey, toast,
+  activeRegion, targetSpan, componentByKey, toast,
 } from '../store.js';
 
 const COMPONENT_KEYS = ['pulse', 'plateau', 'trend', 'oscillation', 'noise'];
 const components = computed(() => COMPONENT_KEYS.map((key) => componentByKey(key)).filter(Boolean));
 
+function editSpan() {
+  return targetSpan() ?? activeRegion()?.span ?? null;
+}
 function addWarpHere() {
-  const r = activeRegion();
-  if (!r) { toast('时间形变需要当前选区——先用「选区」工具划一段'); return; }
-  addWarp({ span: r.span, factor: 1.1, delta: 0 });
+  const span = editSpan();
+  if (!span) { toast('时间形变需要当前选区或结构目标'); return; }
+  addWarp({ span, factor: 1.1, delta: 0 });
 }
 function addEraseHere() {
-  const r = activeRegion();
-  if (!r) { toast('区间擦除需要当前选区——先用「选区」工具划一段'); return; }
-  addErase({ span: r.span });
+  const span = editSpan();
+  if (!span) { toast('区间擦除需要当前选区或结构目标'); return; }
+  addErase({ span });
 }
 function addScaleHere() {
-  const r = activeRegion();
-  if (!r) { toast('缩放需要当前选区——先用「选区」工具划一段'); return; }
-  addScale({ span: r.span, factor: 1.2, feather: 8 });
+  const span = editSpan();
+  if (!span) { toast('缩放需要当前选区或结构目标'); return; }
+  addScale({ span, factor: 1.2, feather: 8 });
 }
 function addShiftHere() {
-  const r = activeRegion();
-  if (!r) { toast('平移需要当前选区——先用「选区」工具划一段'); return; }
-  addShift({ span: r.span, delta: 4, feather: 0 });
+  const span = editSpan();
+  if (!span) { toast('平移需要当前选区或结构目标'); return; }
+  addShift({ span, delta: 4, feather: 0 });
 }
 function addCloneHere() {
   addClone({ dstSpan: activeRegion()?.span ?? null });

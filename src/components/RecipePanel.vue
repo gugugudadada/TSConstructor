@@ -5,7 +5,7 @@ import { computed } from 'vue';
 import {
   store, componentByKey, updateStep, setStepVary, removeStep, toggleStepEnabled, moveStep,
   duplicateStep, clearSteps, selectStep, stepLabel, segmentRefs, textureRefs, activeRegion, toast,
-  regionNameOfSpan,
+  regionNameOfSpan, targetSummary,
 } from '../store.js';
 
 const LEN = computed(() => store.length);
@@ -112,6 +112,7 @@ function setSrcPool(step, e) { updateStep(step.id, { source: e.target.value }); 
           <span class="pl-ord">{{ i + 1 }}</span>
           <span class="pl-name">{{ stepLabel(s) }}</span>
           <span class="pl-scope">{{ scopeText(s) }}</span>
+          <span v-if="s.target" class="pl-scope pl-target-badge" :title="targetSummary(s.target)">· 目标 {{ s.target.label }}</span>
           <span v-if="stepHint(s)" class="pl-scope" :title="stepHint(s)">· {{ stepHint(s) }}</span>
           <span class="pl-acts">
             <button :title="s.enabled === false ? '启用该步' : '停用该步（保留在配方中）'" @click.stop="toggleStepEnabled(s.id)">{{ s.enabled === false ? '○' : '●' }}</button>

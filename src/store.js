@@ -17,6 +17,9 @@ import {
   basicStats, roughnessOf, tailDropOf, RECIPE_SPEC_VERSION, VARIATION_SPEC_VERSION,
   defaultVary, stepLabel, medianOf,
 } from './engine/recipe.js';
+import {
+  descriptorOfStructure, resolveStepTargets, targetSummary, targetTagsOf,
+} from './engine/structureMatching.js';
 
 export const store = reactive({
   // ── 数据 ──
@@ -57,6 +60,8 @@ export const store = reactive({
   // ── 配方（主列） ──
   steps: [],               // 结构化操作步（配方）
   selectedStepId: null,
+  customStructures: [],    // 用户从区间保存的自定义结构模板
+  activeTarget: null,      // 当前操作的区间 / 命名结构 / 自定义结构目标
   regions: [],             // 多选区（canonical）
   selectedRegionId: null,
   tool: 'select',
@@ -89,6 +94,7 @@ let classCentroidCache = new Map();
 let refSeq = 0;
 let stepSeq = 0;
 let regionSeq = 0;
+let targetSeq = 0;
 let batchSeq = 0;
 
 let toastTimer = null;
@@ -143,6 +149,8 @@ export async function init(datasetId = DATASETS[0].id) {
     store.basisMethod = 'pca';
     basisCache = new Map([['pca', b0]]);
     rec('session-init', `${ds.samples.length} 条 · ${ds.classes.length} 类 · ${meta.name} · 基底冻结（PCA 2D）`);
+    store.customStructures = [];
+    store.activeTarget = null;
     // 首开不预设目标类别（D1：目标模式由人声明）——素材架 / 画布 / 配方默认全空。
     // 登记表的 defaultClass 仅作为「缺类重建」弹窗的默认选中项（见 TargetPanel）。
     if (meta.defaultBasis && meta.defaultBasis !== 'pca') setBasisMethod(meta.defaultBasis);
@@ -233,6 +241,8 @@ function onTargetChanged() {
   store.regions = [];
   store.selectedRegionId = null;
   store.selectedStepId = null;
+  store.customStructures = [];
+  store.activeTarget = null;
   store.candidates = [];
   store.batches = [];
   store.lastBatch = null;
@@ -392,6 +402,100 @@ function normSpan(span) {
   const b = Math.max(0, Math.min(lim, Math.round(Math.max(span[0], span[1]))));
   return [a, b];
 }
+
+/* ── 操作目标：区间 / 命名结构 / 自定义结构 ── */
+function regionTarget(r) {
+  return {
+    id: `region:${r.id}`,
+    kind: 'region',
+    label: `R${r.id}`,
+    span: [...r.span],
+  };
+}
+function snapshotTarget(target = store.activeTarget) {
+  return target ? JSON.parse(JSON.stringify(target)) : null;
+}
+export function setActiveTarget(target) {
+  store.activeTarget = target ? JSON.parse(JSON.stringify(target)) : null;
+}
+export function clearActiveTarget() {
+  store.activeTarget = null;
+}
+export function targetSpan() {
+  return normSpan(store.activeTarget?.span);
+}
+function operationSpan(span) {
+  return normSpan(store.activeTarget?.span) ?? normSpan(span) ?? normSpan(activeRegion()?.span);
+}
+function attachTarget(step) {
+  if (store.activeTarget) step.target = snapshotTarget();
+  return step;
+}
+export function addCustomStructure(name) {
+  const r = activeRegion();
+  if (!r) { toast('先在画布上划一个选区，再保存为自定义结构'); return null; }
+  const baseId = primaryBaseId();
+  const values = baseId ? valuesOf(baseId) : null;
+  if (!values) { toast('先指定一个基源，再保存自定义结构'); return null; }
+  const span = normSpan(r.span);
+  if (!span || span[1] - span[0] < 2) { toast('自定义结构至少需要 3 点'); return null; }
+  const slice = values.slice(span[0], span[1] + 1);
+  const st = basicStats(slice);
+  const norm = slice.map((v) => (v - st.mean) / (st.std || 1e-12));
+  const id = ++targetSeq;
+  const cs = {
+    id: `cs${id}`,
+    name: (name || '').trim() || `自定义结构 ${store.customStructures.length + 1}`,
+    baseId,
+    span,
+    width: span[1] - span[0] + 1,
+    relativePosition: ((span[0] + span[1]) / 2) / Math.max(1, store.length - 1),
+    template: norm,
+  };
+  store.customStructures.push(cs);
+  store.activeTarget = {
+    id: `custom:${cs.id}`,
+    kind: 'custom',
+    label: cs.name,
+    span: [...span],
+    descriptor: {
+      type: 'custom',
+      width: cs.width,
+      relativePosition: cs.relativePosition,
+      template: [...norm],
+    },
+  };
+  rec('target', `自定义结构「${cs.name}」← R${r.id} [${span[0]}, ${span[1]}]`);
+  return cs;
+}
+export function selectCustomStructure(id) {
+  const cs = store.customStructures.find((x) => x.id === id);
+  if (!cs) return;
+  setActiveTarget({
+    id: `custom:${cs.id}`,
+    kind: 'custom',
+    label: cs.name,
+    span: [...cs.span],
+    descriptor: {
+      type: 'custom',
+      width: cs.width,
+      relativePosition: cs.relativePosition,
+      template: [...cs.template],
+    },
+  });
+}
+export function setStructureTarget(instance) {
+  if (!instance) return;
+  setActiveTarget({
+    id: `structure:${instance.id}`,
+    kind: 'structure',
+    label: `${instance.label} ${instance.startIndex}–${instance.endIndex}`,
+    span: [instance.startIndex, instance.endIndex],
+    descriptor: descriptorOfStructure(instance),
+  });
+}
+export { targetSummary };
+
 export function addRegion(span) {
   const sp = normSpan(span);
   if (!sp) return false;
@@ -399,12 +503,18 @@ export function addRegion(span) {
   if (b - a < 2) return false;
   pushUndo('新增选区');
   const id = ++regionSeq;
-  store.regions.push({ id, span: [a, b] });
+  const r = { id, span: [a, b] };
+  store.regions.push(r);
   store.selectedRegionId = id;
+  store.activeTarget = regionTarget(r);
   rec('region', `新增选区 R${id} [${a}, ${b}]`);
   return true;
 }
-export function selectRegion(id) { store.selectedRegionId = id; }
+export function selectRegion(id) {
+  store.selectedRegionId = id;
+  const r = store.regions.find((x) => x.id === id);
+  if (r) store.activeTarget = regionTarget(r);
+}
 export function regionNameOfSpan(span) {
   if (!Array.isArray(span)) return null;
   const sp = normSpan(span);
@@ -418,9 +528,14 @@ export function removeRegion(id) {
   pushUndo('删除选区');
   store.regions.splice(i, 1);
   if (store.selectedRegionId === id) store.selectedRegionId = store.regions[store.regions.length - 1]?.id ?? null;
+  if (store.activeTarget?.id === `region:${id}`) store.activeTarget = null;
   rec('region', `删除选区 R${id}`);
 }
-export function clearRegions() { store.regions = []; store.selectedRegionId = null; }
+export function clearRegions() {
+  store.regions = [];
+  store.selectedRegionId = null;
+  if (store.activeTarget?.kind === 'region') store.activeTarget = null;
+}
 export function activeRegion() { return store.regions.find((r) => r.id === store.selectedRegionId) ?? null; }
 
 /* ═══════════ 配方：操作步 ═══════════ */
@@ -432,6 +547,7 @@ export function pushUndo(label) {
     steps: JSON.parse(JSON.stringify(store.steps)),
     regions: JSON.parse(JSON.stringify(store.regions)),
     selectedRegionId: store.selectedRegionId,
+    activeTarget: snapshotTarget(),
     recipeVersion: store.recipeVersion,
   });
   if (undoStack.length > 80) undoStack.shift();
@@ -443,6 +559,7 @@ export function undo() {
   store.steps = e.steps;
   store.regions = e.regions;
   store.selectedRegionId = e.selectedRegionId;
+  if ('activeTarget' in e) store.activeTarget = e.activeTarget;
   store.recipeVersion = e.recipeVersion;
   store.previewOp = null;
   store.undoVersion += 1;
@@ -457,8 +574,8 @@ export function addComponent(key) {
   if (!def) return;
   const L = store.length;
   const reg = activeRegion();
-  const span = reg ? normSpan(reg.span) : [0, L - 1];
-  const width = reg ? Math.max(3, span[1] - span[0]) : (def.params.find((p) => p.key === 'width')?.def ?? 8);
+  const span = normSpan(store.activeTarget?.span) ?? (reg ? normSpan(reg.span) : [0, L - 1]);
+  const width = span ? Math.max(3, span[1] - span[0]) : (def.params.find((p) => p.key === 'width')?.def ?? 8);
   const params = {};
   for (const p of def.params) {
     if (p.key === 'width') params.width = width;
@@ -466,11 +583,11 @@ export function addComponent(key) {
   }
   /* 只有真正能落进配方时才压撤销栈——失败操作不应留下空撤销。 */
   pushUndo(`加入组件 ${def.name}`);
-  const step = {
+  const step = attachTarget({
     id: newStepId(), kind: 'component', component: key, enabled: true,
     span, mix: 'add', weight: 1, ...params,
     vary: defaultVary('component'),
-  };
+  });
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
@@ -487,10 +604,10 @@ export function addDeform({ anchor, width, amp }) {
 }
 
 export function addWarp({ span, factor = 1, delta = 0 }) {
-  const sp = normSpan(span);
+  const sp = operationSpan(span);
   if (!sp || sp[1] - sp[0] < 2) return;
   pushUndo('时间形变');
-  const step = { id: newStepId(), kind: 'warp', enabled: true, span: sp, factor, delta, vary: defaultVary('warp') };
+  const step = attachTarget({ id: newStepId(), kind: 'warp', enabled: true, span: sp, factor, delta, vary: defaultVary('warp') });
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
@@ -547,10 +664,10 @@ export function addTexture({ source, amount = 0.2, win = 9 } = {}) {
 }
 
 export function addErase({ span }) {
-  const sp = normSpan(span);
+  const sp = operationSpan(span);
   if (!sp || sp[1] - sp[0] < 2) { toast('区间擦除需要至少 3 点的选区'); return; }
   pushUndo('区间擦除');
-  const step = { id: newStepId(), kind: 'erase', enabled: true, span: sp, vary: defaultVary('erase') };
+  const step = attachTarget({ id: newStepId(), kind: 'erase', enabled: true, span: sp, vary: defaultVary('erase') });
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
@@ -558,12 +675,12 @@ export function addErase({ span }) {
 }
 
 export function addScale({ span, factor = 1.2, feather = 8 }) {
-  const sp = normSpan(span);
+  const sp = operationSpan(span);
   if (!sp || sp[1] - sp[0] < 2) { toast('缩放需要至少 3 点的选区'); return; }
   const f = Math.max(0.5, Math.min(2, Number(factor) || 1));
   const ft = Math.max(0, Math.min(20, Math.round(Number(feather) || 0)));
   pushUndo('缩放');
-  const step = { id: newStepId(), kind: 'scale', enabled: true, span: sp, factor: f, feather: ft, vary: defaultVary('scale') };
+  const step = attachTarget({ id: newStepId(), kind: 'scale', enabled: true, span: sp, factor: f, feather: ft, vary: defaultVary('scale') });
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
@@ -571,13 +688,13 @@ export function addScale({ span, factor = 1.2, feather = 8 }) {
 }
 
 export function addShift({ span, delta = 4, feather = 0 }) {
-  const sp = normSpan(span);
+  const sp = operationSpan(span);
   if (!sp || sp[1] - sp[0] < 2) { toast('平移需要至少 3 点的选区'); return; }
   const n = sp[1] - sp[0] + 1;
   const d = Math.round(Math.max(-(n - 1), Math.min(n - 1, Number(delta) || 0)));
   const ft = Math.max(0, Math.min(20, Math.round(Number(feather) || 0)));
   pushUndo('平移');
-  const step = { id: newStepId(), kind: 'shift', enabled: true, span: sp, delta: d, feather: ft, vary: defaultVary('shift') };
+  const step = attachTarget({ id: newStepId(), kind: 'shift', enabled: true, span: sp, delta: d, feather: ft, vary: defaultVary('shift') });
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
@@ -671,7 +788,8 @@ export const workRun = computed(() => {
   const baseId = primaryBaseId();
   const base = baseId ? valuesOf(baseId) : null;
   if (!base || !store.dataset) return { values: [], stages: [], contribs: [], stdBase: 1, empty: true };
-  return runRecipe(base, activeSteps(), { sampleValues: valuesOf, noiseSeed: store.seed + 7 });
+  const resolved = resolveStepTargets(activeSteps(), base, { sensitivity: store.structureConfig.sensitivity });
+  return runRecipe(base, resolved.steps, { sampleValues: valuesOf, noiseSeed: store.seed + 7 });
 });
 export const templateValues = computed(() => workRun.value.values);
 
@@ -707,12 +825,13 @@ export function generateCandidates() {
     const baseId = basePool[Math.floor(crng() * basePool.length)];
     const baseVals = valuesOf(baseId);
     const noiseSeed = Math.floor(crng() * 2 ** 31);
-    const inst = instantiateSteps(store.steps, {
+    const targetPrepared = resolveStepTargets(store.steps, baseVals, { sensitivity: store.structureConfig.sensitivity });
+    const inst = instantiateSteps(targetPrepared.steps, {
       rng: crng, L, axes, baseId, basePool, segmentPool: sPool.length ? sPool : basePool, texturePool: tPool, sampleValues: valuesOf, noiseSeed,
     });
     const run = runRecipe(baseVals, inst.steps, { sampleValues: valuesOf, noiseSeed });
     let vals = run.values;
-    const tags = [...inst.tags];
+    const tags = [...inst.tags, ...targetTagsOf(inst.steps)];
     if (axes.residual > 0) {
       const donorId = tPool[Math.floor(crng() * tPool.length)] ?? baseId;
       const amt = axes.residual * (0.6 + crng() * 0.8);

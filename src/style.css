@@ -257,6 +257,7 @@ select { font-family: inherit; }
   padding: 0 4px; font-size: 10.5px; cursor: pointer; color: #3a3f45; background: #fff;
 }
 .ci-region.cur { border-color: #b9cfeb; background: #e8f1fc; color: var(--blue); }
+.ci-region.ci-target { border-color: #e0b38f; background: #fdf1ec; color: var(--wrap); }
 .ci-region-x { border: none; background: none; cursor: pointer; color: var(--wrap); font-size: 9px; padding: 0; }
 .ci-readout {
   position: absolute; right: 8px; top: 6px; font-size: 11px; background: #fff;
@@ -282,8 +283,14 @@ select { font-family: inherit; }
 .ci-struct-sens { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
 .ci-struct-sens select { height: 19px; border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
 .ci-struct-detail {
+  display: flex; align-items: center; gap: 6px;
   color: #3a3f45; font-size: 10.5px; margin-top: 3px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
+}
+.ci-struct-detail > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ci-struct-custom {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+  margin-top: 3px; padding-top: 3px; border-top: 1px dashed var(--line);
 }
 .ci-struct-list { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; max-height: 42px; overflow: auto; }
 .ci-struct-chip {
@@ -346,6 +353,7 @@ select { font-family: inherit; }
 .pl-item.off .pl-ord { background: var(--muted); }
 .pl-name { font-size: 11.5px; font-weight: 600; }
 .pl-scope { color: var(--muted); font-size: 10px; }
+.pl-target-badge { color: #b15c2b; }
 .pl-acts { margin-left: auto; display: flex; gap: 2px; }
 .pl-acts button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 11px; padding: 0 2px; }
 .pl-acts button:hover { color: var(--ink); }
