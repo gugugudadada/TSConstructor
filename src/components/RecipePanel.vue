@@ -40,7 +40,10 @@ function paramsFor(step) {
   if (step.kind === 'warp') return [{ key: 'factor', label: '伸缩', min: 0.8, max: 1.25, step: 0.005 }, { key: 'delta', label: '位移', min: -12, max: 12, step: 1 }];
   if (step.kind === 'transplant') return [{ key: 'alpha', label: '混合', min: 0, max: 1, step: 0.02 }, { key: 'seam', label: '接缝', min: 1, max: 20, step: 1 }];
   if (step.kind === 'erase') return [];
-  if (step.kind === 'translate') return [{ key: 'offset', label: '偏移', min: -3, max: 3, step: 0.02 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
+  if (step.kind === 'shift') {
+    const max = Math.max(1, Math.abs((step.span?.[1] ?? 1) - (step.span?.[0] ?? 0)));
+    return [{ key: 'delta', label: '位移', min: -max, max, step: 1 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
+  }
   if (step.kind === 'scale') return [{ key: 'factor', label: '缩放', min: 0.5, max: 2, step: 0.01 }, { key: 'feather', label: '羽化', min: 1, max: 20, step: 1 }];
   if (step.kind === 'texture') return [{ key: 'amount', label: '强度', min: 0, max: 1.5, step: 0.02 }, { key: 'win', label: '趋势窗', min: 3, max: 31, step: 2 }];
   return [];
@@ -55,8 +58,8 @@ function varyApplies(step, part) {
   if (step.kind === 'texture') return part === 'src' || part === 'amp';
   if (part === 'src') return step.kind === 'transplant';
   if (part === 'width') return ['deform', 'warp', 'transplant'].includes(step.kind);
-  if (part === 'amp') return ['deform', 'transplant', 'scale', 'translate'].includes(step.kind);
-  return ['deform', 'warp', 'transplant', 'erase', 'scale', 'translate'].includes(step.kind);
+  if (part === 'amp') return ['deform', 'transplant', 'scale'].includes(step.kind);
+  return ['deform', 'warp', 'transplant', 'erase', 'scale', 'shift'].includes(step.kind);
 }
 function spanLabel(span) {
   if (!Array.isArray(span)) return '整条';
@@ -68,7 +71,7 @@ function spanLabel(span) {
 function scopeText(step) {
   if (step.kind === 'component') return spanLabel(step.span);
   if (step.kind === 'deform') return `t=${Math.round(step.anchor)}`;
-  if (step.kind === 'warp' || step.kind === 'erase' || step.kind === 'scale' || step.kind === 'translate') return spanLabel(step.span);
+  if (step.kind === 'warp' || step.kind === 'erase' || step.kind === 'scale' || step.kind === 'shift') return spanLabel(step.span);
   if (step.kind === 'texture') return '全条';
   if (step.kind === 'transplant') return `落点 ${step.dstSpan ? spanLabel(step.dstSpan) : `@${step.dstStart}`}`;
   return '';
@@ -77,7 +80,7 @@ function stepHint(step) {
   if (step.kind === 'transplant') return `克隆源 ${step.source} [${step.srcSpan[0]}–${step.srcSpan[1]}]`;
   if (step.kind === 'texture') return `纹理源 ${step.source ?? '（未指定）'}`;
   if (step.kind === 'erase') return '两端点平滑连接';
-  if (step.kind === 'translate') return `偏移 ${Number(step.offset ?? 0) >= 0 ? '+' : ''}${Number(step.offset ?? 0).toFixed(2)}σ`;
+  if (step.kind === 'shift') return `位移 ${Number(step.delta ?? 0) >= 0 ? '+' : ''}${Math.round(Number(step.delta ?? 0))} 点`;
   if (step.kind === 'scale') return `×${Number(step.factor ?? 1).toFixed(2)}`;
   return '';
 }

@@ -3,7 +3,7 @@
    组件与编辑点击即加入配方（组件落在当前选区或整条；编辑类需要当前选区）。 */
 import { computed } from 'vue';
 import {
-  addComponent, addWarp, addErase, addScale, addTranslate, addClone, addTexture,
+  addComponent, addWarp, addErase, addScale, addShift, addClone, addTexture,
   activeRegion, componentByKey, toast,
 } from '../store.js';
 
@@ -25,10 +25,10 @@ function addScaleHere() {
   if (!r) { toast('缩放需要当前选区——先用「选区」工具划一段'); return; }
   addScale({ span: r.span, factor: 1.2, feather: 8 });
 }
-function addTranslateHere() {
+function addShiftHere() {
   const r = activeRegion();
-  if (!r) { toast('幅值平移需要当前选区——先用「选区」工具划一段'); return; }
-  addTranslate({ span: r.span, offset: 0.3, feather: 8 });
+  if (!r) { toast('水平平移需要当前选区——先用「选区」工具划一段'); return; }
+  addShift({ span: r.span, delta: 4, feather: 8 });
 }
 function addCloneHere() {
   addClone({ dstSpan: activeRegion()?.span ?? null });
@@ -61,8 +61,8 @@ function addTextureHere() {
       <button class="pal-item" title="用选区两端点做平滑桥接，移除区间内原有形状" @click="addEraseHere()">
         <span class="pal-glyph">⌫</span><span class="pal-name">区间擦除</span><span class="pal-note">两端平滑连接</span>
       </button>
-      <button class="pal-item" title="在选区内整体上下平移幅值（两端余弦羽化）" @click="addTranslateHere()">
-        <span class="pal-glyph">⇅</span><span class="pal-name">幅值平移</span><span class="pal-note">区间上下偏移</span>
+      <button class="pal-item" title="在选区内把波形整体左右平移（两端余弦羽化）" @click="addShiftHere()">
+        <span class="pal-glyph">↔</span><span class="pal-name">水平平移</span><span class="pal-note">区间左右移动</span>
       </button>
       <button class="pal-item" title="在选区内按局部均值缩放幅值（两端余弦羽化）" @click="addScaleHere()">
         <span class="pal-glyph">↕</span><span class="pal-name">缩放</span><span class="pal-note">幅值缩放</span>

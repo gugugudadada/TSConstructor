@@ -570,17 +570,18 @@ export function addScale({ span, factor = 1.2, feather = 8 }) {
   rec('recipe', `缩放 → 配方（${sp[0]}–${sp[1]}，×${f.toFixed(2)}）`);
 }
 
-export function addTranslate({ span, offset = 0.3, feather = 8 }) {
+export function addShift({ span, delta = 4, feather = 8 }) {
   const sp = normSpan(span);
-  if (!sp || sp[1] - sp[0] < 2) { toast('幅值平移需要至少 3 点的选区'); return; }
-  const off = Math.max(-5, Math.min(5, Number(offset) || 0));
+  if (!sp || sp[1] - sp[0] < 2) { toast('水平平移需要至少 3 点的选区'); return; }
+  const n = sp[1] - sp[0] + 1;
+  const d = Math.round(Math.max(-(n - 1), Math.min(n - 1, Number(delta) || 0)));
   const ft = Math.max(1, Math.min(20, Math.round(Number(feather) || 8)));
-  pushUndo('幅值平移');
-  const step = { id: newStepId(), kind: 'translate', enabled: true, span: sp, offset: off, feather: ft, vary: defaultVary('translate') };
+  pushUndo('水平平移');
+  const step = { id: newStepId(), kind: 'shift', enabled: true, span: sp, delta: d, feather: ft, vary: defaultVary('shift') };
   store.steps.push(step);
   store.selectedStepId = step.id;
   bumpRecipe();
-  rec('recipe', `幅值平移 → 配方（${sp[0]}–${sp[1]}，偏移 ${off.toFixed(2)}σ）`);
+  rec('recipe', `水平平移 → 配方（${sp[0]}–${sp[1]}，${d >= 0 ? '+' : ''}${d} 点）`);
 }
 
 export function updateStep(id, patch) {
@@ -862,7 +863,7 @@ function downloadJson(filename, payload) {
 
 /* ═══════════ 导入配方 ═══════════ */
 
-const IMPORTABLE_KINDS = new Set(['component', 'deform', 'warp', 'erase', 'scale', 'translate', 'transplant', 'texture']);
+const IMPORTABLE_KINDS = new Set(['component', 'deform', 'warp', 'erase', 'scale', 'shift', 'transplant', 'texture']);
 
 function importVary(kind, raw) {
   const v = defaultVary(kind);
@@ -950,11 +951,12 @@ function sanitizeImportedStep(raw, ctx) {
     s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
     return s;
   }
-  if (kind === 'translate') {
+  if (kind === 'shift') {
     const span = normSpan(raw.span);
     if (!span || span[1] - span[0] < 2) return null;
+    const n = span[1] - span[0] + 1;
     s.span = span;
-    s.offset = importNum(raw.offset, 0.3, -5, 5);
+    s.delta = Math.round(importNum(raw.delta, 4, -(n - 1), n - 1));
     s.feather = Math.round(importNum(raw.feather, 8, 1, 20));
     return s;
   }

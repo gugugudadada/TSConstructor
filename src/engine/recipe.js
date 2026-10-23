@@ -2,7 +2,7 @@
    = 把"直接编辑 + 组件组合"整理为**结构化、可复用、可变化**的配方，并在不同源样本上执行。
 
    设计要点（对应 idea 的 RQ1/RQ2）：
-   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 幅值平移 / 幅值缩放；
+   · 配方 = 有序 **操作步**（step）：组件 / 点拖拽 / 时间弯曲 / 克隆 / 纹理 / 擦除 / 水平平移 / 幅值缩放；
      每步都结构化记录对象、区间、参数、源样本，而不是只存最终数组。
    · 每步带 `vary`：哪些维度允许在生成时变化（位置 / 宽度 / 强度 / 源）。
    · runRecipe：给定基源样本 + 配方 → 结果曲线 + 逐级中间结果 + **逐点归因贡献**。
@@ -341,24 +341,25 @@ export function applyStep(cur, step, ctx) {
       }
       return { values: out, unit: '×' };
     }
-    case 'translate': {
-      /* 幅值平移：在选区内整体上下偏移，两端余弦羽化回原值。 */
+    case 'shift': {
+      /* 水平平移：在选区内把波形整体左右平移，区间外不变；两端余弦羽化回原位。 */
       if (!step.span) return { values: null, reason: '缺少区间' };
       const d0 = clamp(Math.round(Math.min(step.span[0], step.span[1])), 0, L - 1);
       const d1 = clamp(Math.round(Math.max(step.span[0], step.span[1])), 0, L - 1);
       const n = d1 - d0 + 1;
       if (n < 3) return { values: null, reason: '区间过短（至少 3 点）' };
-      const offset = Number.isFinite(step.offset) ? step.offset : 0;
-      if (!offset) return { values: cur.slice(), unit: '×σ' };
+      const delta = clamp(Math.round(Number.isFinite(step.delta) ? step.delta : 0), -(n - 1), n - 1);
+      if (!delta) return { values: cur.slice(), unit: '点' };
       const seam = Math.max(1, Math.min(Math.round(step.feather ?? 8), Math.floor(n / 3)));
       const out = cur.slice();
       for (let k = 0; k < n; k++) {
+        const src = clamp(k - delta, 0, n - 1);
         let w = 1;
         if (k < seam) w = 0.5 * (1 - Math.cos((Math.PI * k) / seam));
         else if (k >= n - seam) w = 0.5 * (1 - Math.cos((Math.PI * (n - 1 - k)) / seam));
-        out[d0 + k] = cur[d0 + k] + stdBase * offset * w;
+        out[d0 + k] = cur[d0 + k] * (1 - w) + cur[d0 + src] * w;
       }
-      return { values: out, unit: '×σ' };
+      return { values: out, unit: '点' };
     }
     default:
       return { values: null, reason: `未知操作：${step.kind}` };
@@ -452,7 +453,7 @@ export function stepLabel(step) {
     case 'texture': return '纹理';
     case 'erase': return '区间擦除';
     case 'scale': return '缩放';
-    case 'translate': return '幅值平移';
+    case 'shift': return '水平平移';
     default: return step.kind;
   }
 }
@@ -557,7 +558,7 @@ export function defaultVary(kind) {
   if (kind === 'transplant') return { pos: true, width: true, amp: true, src: true };
   if (kind === 'erase') return { pos: true, width: false, amp: false, src: false };
   if (kind === 'scale') return { pos: true, width: false, amp: true, src: false };
-  if (kind === 'translate') return { pos: true, width: false, amp: true, src: false };
+  if (kind === 'shift') return { pos: true, width: false, amp: false, src: false };
   if (kind === 'texture') return { pos: false, width: false, amp: true, src: true };
   return { pos: true, width: true, amp: true, src: false };
 }
@@ -702,16 +703,10 @@ export function instantiateSteps(steps, opts) {
         if (nv !== s.factor) parts.push(`强${pct(baseFactor, nv)}`);
         s.factor = nv;
       }
-    } else if (s.kind === 'translate') {
+    } else if (s.kind === 'shift') {
       if (vary.pos) {
         const d = Math.round((rng() * 2 - 1) * axes.anchor);
         if (d !== 0) { s.span = [clamp(s.span[0] + d, 0, L - 1), clamp(s.span[1] + d, 0, L - 1)]; parts.push(`位${d > 0 ? '+' : ''}${d}`); }
-      }
-      if (vary.amp) {
-        const baseOffset = Number.isFinite(s.offset) ? s.offset : 0;
-        const nv = clamp(baseOffset * (1 + (rng() * 2 - 1) * axes.param), -5, 5);
-        if (nv !== s.offset) parts.push(`强${pct(baseOffset, nv)}`);
-        s.offset = nv;
       }
     }
     if (parts.length) tags.push({ opId: step.id, kind: s.kind, label: stepLabel(s), parts });
